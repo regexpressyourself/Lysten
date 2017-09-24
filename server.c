@@ -43,9 +43,9 @@ int main()
     server_sockfd = setup_socket();
     while(1) {
         // server set up and started
-#ifdef DEBUG
+        #ifdef DEBUG
         printf("server waiting\n");
-#endif
+        #endif
 
         // accept a new client
         client_sockfd = get_client_sockfd(server_sockfd);
@@ -150,9 +150,9 @@ void handle_client(int client_sockfd) {
     // get the slave pty name from the master pty
     slave_pty_name = ptsname(master_pty_fd);
     if (slave_pty_name == NULL ){
-#ifdef DEBUG
+        #ifdef DEBUG
         printf("getting ptsname failed\n");
-#endif
+        #endif
     }
 
     // create a new subprocess for bash
@@ -303,9 +303,9 @@ int from_client_to_pty(int client_sockfd, int master_pty_fd) {
         return -1;
     }
     if (bytes_read == 0) {
-#ifdef DEBUG
+        #ifdef DEBUG
         printf("Read 0 bytes from client\n");
-#endif
+        #endif
         return 0;
     }
     else {

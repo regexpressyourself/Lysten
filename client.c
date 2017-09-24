@@ -103,7 +103,9 @@ int handle_stdin_to_sock(int sockfd)
     // read from stdin
     bytes_read = read(STDIN_FILENO, &buffer, sizeof(buffer));
     if (bytes_read < 0){ 
+        #ifdef DEBUG
         perror("Oops. Read failure from STDIN to socket.\n"); 
+        #endif
         close(sockfd);
         return -1;
     }
@@ -137,9 +139,9 @@ int handle_sock_to_stdout(int sockfd)
 
     // if socket returns empty string, return 0
     else if (bytes_read == 0 ) {
-#ifdef DEBUG
+        #ifdef DEBUG
         printf("Read 0 bytes from socket.\n"); 
-#endif
+        #endif
         close(sockfd);
         return 0;
     }
@@ -200,9 +202,9 @@ int setup_socket(char *ip_addr)
     address.sin_port   = htons(PORT);
 
     if (inet_aton(ip_addr, &address.sin_addr) == 0) {
-#ifdef DEBUG
+        #ifdef DEBUG
         fprintf(stderr, "Invalid address\n");
-#endif
+        #endif
         exit(EXIT_FAILURE);
     }
 
@@ -237,9 +239,9 @@ int error_check(int return_val, char *error_msg, int sockfd)
 int set_non_canon_mode(int fd, struct termios *prevTermios)
 {
     struct termios t;
-#ifdef DEBUG
+    #ifdef DEBUG
     printf("%d",fd);
-#endif
+    #endif
     if (tcgetattr(fd, &t) == -1){
         perror("problem in first getattr\n");
         return -1;
