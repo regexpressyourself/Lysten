@@ -1,4 +1,4 @@
-/* lab1-client.c
+/* lab2-client.c
  * Sam Messina
  * CS 407
  */
@@ -26,38 +26,23 @@ int  setup_socket(char *ip_addr);
 int  handle_protocol(int sockfd);
 int handle_stdin_to_sock(int sockfd);
 int handle_sock_to_stdout(int sockfd);
-int set_non_canonical_mode(int sockfd, struct termios *tty);
-int set_canonical_mode(int fd, struct termios *tty);
-int ttySetCbreak(int fd, struct termios *prevTermios);
+int set_non_canon_mode(int fd, struct termios *prevTermios);
 
 int main(int argc, char *argv[])
 {
-    /* Main Driver
-     * 1. connect to and wait for server
-     * 2. exchange secret word
-     * 3. fork
-     * 4. one fork reads from stdin and sends to socket
-     * 5. other fork reads from socket and sends to stdout
-     * 6. exit terminates client
-     */
 
     int    sockfd = 0;          // file descriptor for socket
     int read_write_return_val;
     pid_t pid;
     // get argument from command line
     if (argc != 2) {
-    // TODO remove
-        sockfd = setup_socket("127.0.0.1");
-        //fprintf(stderr, "Please specify an IP address\n");
-        //exit(EXIT_FAILURE);
+        fprintf(stderr, "Please specify an IP address\n");
+        exit(EXIT_FAILURE);
     }
-
-    // TODO remove
-    else
-        sockfd = setup_socket(argv[1]);
+    sockfd = setup_socket(argv[1]);
 
 
-    if (ttySetCbreak(STDIN_FILENO, &tty) < 0 ) {
+    if (set_non_canon_mode(STDIN_FILENO, &tty) < 0 ) {
         perror("Could not set canonical mode");
     }
 
@@ -123,7 +108,9 @@ int handle_stdin_to_sock(int sockfd)
         return -1;
     }
     else if (bytes_read == 0 ) {
+        #ifdef DEBUG
         printf("Read 0 bytes from STDIN.\n"); 
+        #endif
         close(sockfd);
         return 0;
     }
@@ -150,7 +137,9 @@ int handle_sock_to_stdout(int sockfd)
 
     // if socket returns empty string, return 0
     else if (bytes_read == 0 ) {
+#ifdef DEBUG
         printf("Read 0 bytes from socket.\n"); 
+#endif
         close(sockfd);
         return 0;
     }
@@ -211,7 +200,9 @@ int setup_socket(char *ip_addr)
     address.sin_port   = htons(PORT);
 
     if (inet_aton(ip_addr, &address.sin_addr) == 0) {
+#ifdef DEBUG
         fprintf(stderr, "Invalid address\n");
+#endif
         exit(EXIT_FAILURE);
     }
 
@@ -243,52 +234,12 @@ int error_check(int return_val, char *error_msg, int sockfd)
     return return_val; 
 }
 
-int set_non_canonical_mode(int fd, struct termios *tty)
+int set_non_canon_mode(int fd, struct termios *prevTermios)
 {
     struct termios t;
-    if (tcgetattr(fd, &t) == -1)
-        return -1;
-    if (tty != NULL)
-        *tty = t;
-    t.c_lflag &= ~(ICANON | ISIG | IEXTEN | ECHO);
-    /* Noncanonical mode, disable signals, extended
-       input processing, and echoing */
-    t.c_iflag &= ~(BRKINT | ICRNL | IGNBRK | IGNCR | INLCR |
-            INPCK | ISTRIP | IXON | PARMRK);
-    /* Disable special handling of CR, NL, and BREAK.
-       No 8th-bit stripping or parity error handling.
-       Disable START/STOP output flow control. */
-    t.c_oflag &= ~OPOST; /* Disable all output processing */
-    t.c_cc[VMIN] = 1;
-    t.c_cc[VTIME] = 0; /* Character-at-a-time input */
-    /* with blocking */
-    if (tcsetattr(fd, TCSAFLUSH, &t) == -1)
-        return -1;
-    return 0;
-}
-int set_canonical_mode(int fd, struct termios *tty)
-{
-    struct termios t;
-    if (tcgetattr(fd, &t) == -1)
-        return -1;
-    if (tty != NULL)
-        *tty = t;
-    t.c_lflag &= ~(ICANON | ECHO);
-    t.c_lflag |= ISIG;
-    t.c_iflag &= ~ICRNL;
-    t.c_cc[VMIN] = 1;
-    t.c_cc[VTIME] = 0;
-    /* Character-at-a-time input */
-    /* with blocking */
-    if (tcsetattr(fd, TCSAFLUSH, &t) == -1)
-        return -1;
-    return 0;
-}
-
-int ttySetCbreak(int fd, struct termios *prevTermios)
-{
-    struct termios t;
+#ifdef DEBUG
     printf("%d",fd);
+#endif
     if (tcgetattr(fd, &t) == -1){
         perror("problem in first getattr\n");
         return -1;
@@ -300,8 +251,6 @@ int ttySetCbreak(int fd, struct termios *prevTermios)
     t.c_iflag &= ~ICRNL;
     t.c_cc[VMIN] = 1;
     t.c_cc[VTIME] = 0;
-    /* Character-at-a-time input */
-    /* with blocking */
     if (tcsetattr(fd, TCSAFLUSH, &t) == -1){
         perror("problem in second getattr\n");
         return -1;
