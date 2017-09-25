@@ -21,19 +21,19 @@
 
 struct termios tty;
 
-int  error_check(int return_val, char *error_msg, int sockfd);
 int  setup_socket(char *ip_addr);
 int  handle_protocol(int sockfd);
 int handle_stdin_to_sock(int sockfd);
 int handle_sock_to_stdout(int sockfd);
-int set_non_canon_mode(int fd, struct termios *prevTermios);
+int set_non_canon_mode(int fd, struct termios *prev_tty);
 
 int main(int argc, char *argv[])
 {
 
-    int    sockfd = 0;          // file descriptor for socket
-    int read_write_return_val;
+    int   sockfd = 0;          // file descriptor for socket
+    int   temp_fd;
     pid_t pid;
+
     // get argument from command line
     if (argc != 2) {
         fprintf(stderr, "Please specify an IP address\n");
@@ -60,13 +60,13 @@ int main(int argc, char *argv[])
         case 0:
             // child process reads from stdin and writes to socket
             while (1) {
-                read_write_return_val = handle_stdin_to_sock(sockfd); 
-                if (read_write_return_val < 0) {
+                temp_fd = handle_stdin_to_sock(sockfd); 
+                if (temp_fd < 0) {
                     pid = getppid();
                     kill(pid, SIGTERM);
                     exit(1);
                 }
-                else if (read_write_return_val == 0) {
+                else if (temp_fd == 0) {
                     pid = getppid();
                     kill(pid, SIGTERM);
                     exit(0);
@@ -76,12 +76,12 @@ int main(int argc, char *argv[])
         default:
             // parent reads from socket and writes to stdout
             while (1) {
-                read_write_return_val = handle_sock_to_stdout(sockfd);
-                if (read_write_return_val < 0) {
+                temp_fd = handle_sock_to_stdout(sockfd);
+                if (temp_fd < 0) {
                     kill(pid, SIGTERM);
                     exit(1);
                 }
-                else if (read_write_return_val == 0) {
+                else if (temp_fd == 0) {
                     kill(pid, SIGTERM);
                     exit(0);
                 }
@@ -217,44 +217,26 @@ int setup_socket(char *ip_addr)
 
 }
 
-int error_check(int return_val, char *error_msg, int sockfd) 
+int set_non_canon_mode(int fd, struct termios *prev_tty)
 {
-    /* error_check serves to make the code more readable. 
-     * If the return value is negative:
-     *   1. an error message is spit out
-     *   2. the socket is closed, and
-     *   3. the program exits with EXIT_FAILURE.
-     */
+    struct termios temp_tty;
 
-    if ( return_val < 0 ) {
-        perror(error_msg);
-        if (sockfd) { 
-            close(sockfd);
-        };
-        exit(EXIT_FAILURE);
-    }
-    return return_val; 
-}
-
-int set_non_canon_mode(int fd, struct termios *prevTermios)
-{
-    struct termios t;
-    #ifdef DEBUG
-    printf("%d",fd);
-    #endif
-    if (tcgetattr(fd, &t) == -1){
-        perror("problem in first getattr\n");
+    if (tcgetattr(fd, &temp_tty) == -1){
+        perror("problem in tcgeattr\n");
         return -1;
     }
-    if (prevTermios != NULL)
-        *prevTermios = t;
-    t.c_lflag &= ~(ICANON | ECHO);
-    t.c_lflag |= ISIG;
-    t.c_iflag &= ~ICRNL;
-    t.c_cc[VMIN] = 1;
-    t.c_cc[VTIME] = 0;
-    if (tcsetattr(fd, TCSAFLUSH, &t) == -1){
-        perror("problem in second getattr\n");
+
+    if (prev_tty != NULL)
+        *prev_tty = temp_tty;
+
+    temp_tty.c_lflag &= ~(ICANON | ECHO);
+    temp_tty.c_lflag |= ISIG;
+    temp_tty.c_iflag &= ~ICRNL;
+    temp_tty.c_cc[VMIN] = 1;
+    temp_tty.c_cc[VTIME] = 0;
+
+    if (tcsetattr(fd, TCSAFLUSH, &temp_tty) == -1){
+        perror("problem in tcsetattr\n");
         return -1;
     }
     return 0;
