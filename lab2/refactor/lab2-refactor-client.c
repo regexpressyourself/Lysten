@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/wait.h>
 
 #define SECRET     "cs407rembash\n"
 #define PORT       4070
@@ -26,6 +27,9 @@ int  handle_protocol(int sockfd);
 int handle_stdin_to_sock(int sockfd);
 int handle_sock_to_stdout(int sockfd);
 int set_non_canon_mode(int fd, struct termios *prev_tty);
+void sigchld_handler(int signal);
+void restore_tty_settings();
+void exit_gracefully(int exit_status);
 
 int main(int argc, char *argv[])
 {
@@ -33,6 +37,15 @@ int main(int argc, char *argv[])
     int   sockfd = 0;          // file descriptor for socket
     int   temp_fd;
     pid_t pid;
+    struct sigaction act;
+    act.sa_handler = sigchld_handler;
+    act.sa_flags = 0;
+    sigemptyset(&act.sa_mask);
+
+    if (sigaction(SIGCHLD, &act, NULL) < 0) {
+        perror("Oops. Could not make signal handler");
+        exit(EXIT_FAILURE); 
+    }
 
     // get argument from command line
     if (argc != 2) {
@@ -240,4 +253,35 @@ int set_non_canon_mode(int fd, struct termios *prev_tty)
         return -1;
     }
     return 0;
+}
+
+void sigchld_handler(int signal)
+{
+  exit_gracefully(EXIT_SUCCESS);
+
+}
+
+void restore_tty_settings()
+{
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &tty) == -1) {
+    perror("Oops. Could not restoring TTY attributes ");
+    exit(EXIT_FAILURE); 
+  }
+
+  return;
+}
+
+void exit_gracefully(int exit_status)
+{
+  restore_tty_settings();
+
+  int childstatus;
+  wait(&childstatus);
+
+  if (exit_status==EXIT_FAILURE || 
+          !WIFEXITED(childstatus) || 
+          WEXITSTATUS(childstatus) != EXIT_SUCCESS)
+    exit(EXIT_FAILURE);
+
+  exit(EXIT_SUCCESS);
 }
