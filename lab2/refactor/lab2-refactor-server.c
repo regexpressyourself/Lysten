@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <libgen.h>
 #include <fcntl.h>
+#include <sys/wait.h>
 
 #define SECRET "cs407rembash\n"
 #define PORT 4070
@@ -32,6 +33,9 @@ int  setup_slave_pty(char *slave_pty_name);
 int  from_client_to_pty(int client_sockfd, int master_pty_fd);
 int  from_pty_to_client(int client_sockfd, int master_pty_fd);
 int  handle_pty_master(int client_sockfd, int master_pty_fd);
+void sigchld_handler(int signal, siginfo_t *sip, void *ignore);
+
+pid_t cpid[2];
 
 int main()
 {
@@ -41,6 +45,7 @@ int main()
 
     // setup our server
     server_sockfd = setup_socket();
+    signal(SIGCHLD,SIG_IGN);
     while(1) {
         // server set up and started
         #ifdef DEBUG
@@ -68,7 +73,7 @@ int main()
 
                     // child handles the new client
                     handle_client(client_sockfd);
-                    break;
+                    exit(EXIT_FAILURE);
 
                 default: // parent
                     // parent closes socket and returns back to main,
@@ -157,6 +162,7 @@ void handle_client(int client_sockfd) {
 
     // create a new subprocess for bash
     pid = fork();
+    cpid[0] = pid;
     switch(pid) {
         case -1:
             perror("Oops. Fork failure.\nDid you try a spoon?"); 
@@ -175,10 +181,7 @@ void handle_client(int client_sockfd) {
 
             // should not get here if all goes well.
             // kill off errant processes if we do get here.
-            pid = getppid();
-            kill(pid, SIGTERM);
-            exit(1);
-            break;
+            exit(EXIT_FAILURE);
 
         default: // parent
             // PTY Master begins here
@@ -201,11 +204,23 @@ int handle_pty_master(int client_sockfd, int master_pty_fd)
     /* Take care of the read/write loops between 
      * the client socket and the master PTY
      */
+    struct sigaction act;
+    act.sa_sigaction = sigchld_handler;
+    act.sa_flags = SA_SIGINFO|SA_RESETHAND;  
+    sigemptyset(&act.sa_mask);
+
+    if (sigaction(SIGCHLD, &act, NULL) < 0) {
+        perror("Error registering handler for SIGCHLD");
+        return -1; 
+    }
+
+  signal(SIGPIPE,SIG_IGN);
     int return_val;
     pid_t  pid;
 
     // fork off for read/write logic
     pid = fork();
+    cpid[1] = pid;
     switch (pid) {
         case -1:
             perror("Oops. Fork failure.\nDid you try a spoon?"); 
@@ -396,6 +411,7 @@ int setup_pty(void) {
         perror("master pty failed\n");
         return -1;
     }
+    fcntl(master_pty_fd,F_SETFD,FD_CLOEXEC);
 
     // grant PTY
     if ((grantpt(master_pty_fd)) < 0 ) {
@@ -473,3 +489,18 @@ int setup_socket(void)
     return server_sockfd;
 }
 
+void sigchld_handler(int signal, siginfo_t *sip, void *ignore)
+{
+
+  // Kill off any errant processes out there
+  if (sip->si_pid == cpid[0]) {
+    kill(cpid[1],SIGTERM); }
+  else {
+    kill(cpid[0],SIGTERM); }
+
+  // Collect client's child processes 
+  while (waitpid(-1,NULL,WNOHANG) > 0);
+
+  // Kill client's parent process
+  _exit(EXIT_SUCCESS);
+}
