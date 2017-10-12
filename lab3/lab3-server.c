@@ -3,19 +3,11 @@
  * CS 407
  */
 #define _XOPEN_SOURCE 600
-#include <sys/types.h>
-#include <termios.h>
-#include <sys/socket.h>
-#include <sys/select.h>
 #include <stdio.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <signal.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
-#include <libgen.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/wait.h>
@@ -23,131 +15,273 @@
 
 #define SECRET "cs407rembash\n"
 #define PORT 4070
-#define INPUT_SIZE 4096
-#define MAX_BUF 1000
+#define INPUT_SIZE 1000
 #define MAX_EVENTS 1000
 
-int  error_check(int return_val, char *error_msg, int sockfd);
-void * handle_client(void*arg);
+int setup_server(void);
 void * epoll_wait_loop(void*arg);
-int  setup_socket(void);
-int  setup_pty(void);
-int  get_client_sockfd(int server_sockfd);
-int  handle_protocol(int client_sockfd);
-int  setup_slave_pty(char *slave_pty_name);
-int  from_client_to_pty(int client_sockfd, int master_pty_fd);
-int  from_pty_to_client(int client_sockfd, int master_pty_fd);
-int handle_pty_master(int client_sockfd, int master_pty_fd);
+int transfer_data(int in_fd, int out_fd);
+int close_hung_fds(int hung_fd);
+int accept_new_client(int server_sockfd);
+void * handle_client(void*client_sockfd_ptr);
+int handle_protocol(int client_sockfd);
+int exec_bash(char  *slave_pty_name);
+int setup_client_pty_epoll_units(int client_sockfd, int master_pty_fd);
+int setup_pty(void);
 
 int epoll_fds[MAX_EVENTS*2 + 5];
 int epfd;
+
 int main()
 {
+    int        server_sockfd;
+    int        client_sockfd = 0;
+    int       *client_sockfd_ptr;
+    pthread_t epoll_threadid;
+    pthread_t temp_threadid;
 
+    // setup our server
+    server_sockfd = setup_server();
+
+    // create our epoll fd
     epfd = epoll_create1(EPOLL_CLOEXEC);
 
-    int   server_sockfd;
-    int   client_sockfd = 0;
-    int *client_sockfd_ptr;
-    pthread_t threadid;
-    // setup our server
-    server_sockfd = setup_socket();
+    // start the epoll wait loop
+    pthread_create(&epoll_threadid, NULL, epoll_wait_loop, NULL);
 
-    pthread_create(&threadid, NULL, epoll_wait_loop, NULL);
+    // ignore bash's signals, as we don't care about exit status
     signal(SIGCHLD,SIG_IGN);
+
     while(1) {
         // server set up and started
-        #ifdef DEBUG
+    #ifdef DEBUG
         printf("server waiting\n");
-        #endif
-        client_sockfd_ptr = malloc(sizeof(int));
-        // accept a new client
-        client_sockfd = get_client_sockfd(server_sockfd);
-        if (client_sockfd < 0) {continue;};
-        *client_sockfd_ptr = client_sockfd;
-        pthread_create(&threadid, NULL, handle_client, client_sockfd_ptr);
+    #endif
 
+        /*
+         * Create a little memory for our client socket FDs.
+         * This avoids race conditions between pthread creation, 
+         * handle_client's call, and another client connecting, 
+         * thus hijacking client_sockfd.
+         */
+        client_sockfd_ptr = malloc(sizeof(int));
+
+        // accept a new client
+        client_sockfd = accept_new_client(server_sockfd);
+
+        // TODO this might be a gross way to throw away clients
+        // Look into alternatives.
+        if (client_sockfd < 0) {continue;};
+
+        // get that file descriptor and put it in the 
+        // memory we malloc'ed earlier
+        *client_sockfd_ptr = client_sockfd;
+
+        // create a temporary thread to start handling the protocol
+        pthread_create(&temp_threadid, NULL, handle_client, client_sockfd_ptr);
+
+        // ... and start it all again
     }
     return EXIT_FAILURE;
 }
 
-void * epoll_wait_loop(void*arg){
+int setup_server(void) 
+{
+    /* Performs the heavy lifting to get the 
+     * server off the ground
+     */
+    int       server_sockfd;
+    int       client_sockfd = 0;
+    socklen_t server_len;
+    struct    sockaddr_in server_address;
+    int option = 1;
+
+    server_sockfd                  = socket(AF_INET, SOCK_STREAM, 0);
+    server_address.sin_family      = AF_INET;
+    server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_address.sin_port        = htons(PORT);
+    server_len                     = sizeof(server_address);
+    setsockopt(server_sockfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
+
+    // use address for socket address to avoid pass by value
+    if (bind(server_sockfd, (struct sockaddr *)&server_address, server_len)< 0) {
+        perror("could not bind server");
+        exit(1);
+    }
+
+    // listen with a backlog of 5 connections
+    if ((listen(server_sockfd, 5) < 0)) { 
+        perror("Oops. Error \n"); 
+        close(client_sockfd);
+    }
+
+    return server_sockfd;
+}
+
+void * epoll_wait_loop(void*arg)
+{
     int ready;
     int sfd;
-    int bytes_read;
-    int i = 0;
-    char buf[MAX_BUF];
+    int i;
     struct epoll_event evlist[MAX_EVENTS];
     while (1) {
-        memset(buf,0, sizeof(buf));
         ready = epoll_wait(epfd, evlist, MAX_EVENTS, -1);
-
-        for (i = 0; i<ready; i++) {
-
-            printf(" fd=%d; events: %s%s%s\n", evlist[i].data.fd,
-                    (evlist[i].events & EPOLLIN) ? "EPOLLIN " : "",
-                    (evlist[i].events & EPOLLHUP) ? "EPOLLHUP " : "",
-                    (evlist[i].events & EPOLLERR) ? "EPOLLERR " : "");
+        for (i = 0; i < ready; i++) {
 
             if ((evlist[i].events & EPOLLHUP) || 
                     (evlist[i].events & EPOLLERR) ) {
                 // in the event of error...
-
                 // get the error'ed file descriptor (sfd)
                 sfd = evlist[i].data.fd;
-
-                // close the hung thread (sfd)
-                printf("closing %d\n", sfd);
-                if (close(sfd) == -1 ) {
-                    printf("error closing fd: %d\n", sfd);
-                }
-                else {
-                    printf("closed fd: %d\n", sfd);
-                }
-
-                // close hung thread's compatriot 
-                // (the value at epoll_fsd[sfd])
-                printf("closing %d\n", epoll_fds[sfd]);
-                if (close(epoll_fds[sfd]) == -1 ) {
-                    printf("error closing fd: %d\n", epoll_fds[sfd]);
-                }
-                else {
-                    printf("closed fd: %d\n", epoll_fds[sfd]);
-                }
+                close_hung_fds(sfd);
+                close_hung_fds(epoll_fds[sfd]);
             }
             if (evlist[i].events & EPOLLIN) {
                 sfd = evlist[i].data.fd;
                 printf("epoll fd: %d\n", sfd);
-                bytes_read = read(sfd, buf, sizeof(buf));
-                if (bytes_read == -1) {
-                    perror("error on read");
+                if (transfer_data(sfd, epoll_fds[sfd]) <= 0) {
+                    close_hung_fds(sfd);
+                    close_hung_fds(epoll_fds[sfd]);
                 }
-                else if (bytes_read == 0) {
-                if (close(epoll_fds[sfd]) == -1 ) {
-                    printf("error closing fd: %d\n", epoll_fds[sfd]);
-                }
-                else {
-                    printf("closed fd: %d\n", epoll_fds[sfd]);
-                }
-                if (close(sfd) == -1 ) {
-                    printf("error closing fd: %d\n", sfd);
-                }
-                else {
-                    printf("closed fd: %d\n", sfd);
-                }
-                }
-                bytes_read = write(epoll_fds[sfd], buf, sizeof(buf));
-                if (bytes_read == -1) {
-                    perror("error on write");
-                }
-
             };
         }
     }
 }
 
+int transfer_data(int in_fd, int out_fd)
+{
+    char buf[INPUT_SIZE];
+    int bytes_read;
+    memset(buf,0, sizeof(buf));
 
-int handle_protocol(int client_sockfd) {
+    bytes_read = read(in_fd, buf, sizeof(buf));
+    if (bytes_read == -1) {
+        fprintf(stderr, "Error reading from: %d\n", in_fd);
+        return -1;
+    }
+    else if (bytes_read == 0) {
+        return 0;
+    }
+
+    bytes_read = write(out_fd, buf, sizeof(buf));
+    if (bytes_read == -1) {
+        fprintf(stderr, "Error writing to : %d\n", out_fd);
+        return -1;
+    }
+    return 1;
+}
+
+int close_hung_fds(int hung_fd)
+{
+    // close the hung thread 
+    printf("closing %d\n", hung_fd);
+    if (close(hung_fd) == -1 ) {
+    #ifdef DEBUG
+        printf("error closing fd: %d\n", hung_fd);
+    #endif
+        return -1;
+    }
+    else {
+    #ifdef DEBUG
+        printf("closed fd: %d\n", hung_fd);
+    #endif
+        return 1;
+    }
+}
+
+int accept_new_client(int server_sockfd)
+{
+    /* Accepts new clients and returns 
+     * their FD
+     */
+    int       client_sockfd = 0;
+    socklen_t client_len;
+    struct    sockaddr_in client_address;
+
+    #ifdef DEBUG
+    printf("server socket in use from accept: %d\n",server_sockfd);
+    #endif
+    client_len    = sizeof(client_address);
+
+    // seperate fd for each client
+    client_sockfd = accept(server_sockfd,
+            (struct sockaddr *)&client_address, 
+            &client_len);
+
+    if (client_sockfd < 0) {
+        perror("Oops. Error accepting connection");
+        close(client_sockfd);
+    }
+    return client_sockfd;
+}
+
+void * handle_client(void*client_sockfd_ptr) 
+{
+    /* handle_client is called after a 
+     * connection with the client has been created.
+     *
+     * client_sockfd is the file descriptor for the socket.
+     */
+
+    int client_sockfd = *(int*)client_sockfd_ptr;
+    free(client_sockfd_ptr);
+    int   master_pty_fd;
+    int   return_val;
+    char  *slave_pty_name;
+    pid_t pid;
+
+    // handle rembash protocol
+    if (handle_protocol(client_sockfd) == -1) {
+        #ifdef DEBUG
+        printf("Error in handle_protocol()");
+        #endif
+        close(client_sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    // run all the setup functions for the master pty
+    if ((master_pty_fd = setup_pty()) < 0) {
+        #ifdef DEBUG
+        perror("Error setting up PTY\n");
+        #endif
+    }
+
+    // get the slave pty name from the master pty
+    slave_pty_name = ptsname(master_pty_fd);
+    if (slave_pty_name == NULL ){
+        #ifdef DEBUG
+        printf("getting ptsname failed\n");
+        #endif
+    }
+
+    // create a new subprocess for bash
+    pid = fork();
+    switch(pid) {
+        case -1:
+            perror("Oops. Fork failure.\nDid you try a spoon?"); 
+            close(client_sockfd);
+            exit(1);
+            break;
+        case 0: // child
+            // set up pty slave and bash process
+            close(master_pty_fd);
+            close(client_sockfd);
+            exec_bash(slave_pty_name);
+        default: // parent
+            // set up the epoll units and kill the temp thread
+            return_val = setup_client_pty_epoll_units(client_sockfd, master_pty_fd);
+            if (return_val < 0) {
+                kill(pid, SIGTERM);
+                pthread_exit(NULL);
+                exit(1);
+            }
+            pthread_exit(NULL);
+    }
+    return NULL;
+}
+
+int handle_protocol(int client_sockfd) 
+{
     /* Handles the rembash protocol step 
      * in the server 
      */
@@ -188,212 +322,78 @@ int handle_protocol(int client_sockfd) {
     return 1;
 }
 
-void * handle_client(void*arg) {
-    /* handle_client is called after a 
-     * connection with the client has been created.
-     *
-     * client_sockfd is the file descriptor for the socket.
-     */
-
-    int client_sockfd = *(int*)arg;
-    char  buffer[INPUT_SIZE];
-    int   master_pty_fd;
-    int   return_val;
-    char  *slave_pty_name;
-    pid_t pid;
-    memset(buffer, 0, sizeof(buffer));
-
-    // handle rembash protocol
-    if (handle_protocol(client_sockfd) == -1) {
-        printf("Error in handle_protocol()");
-        close(client_sockfd);
+int exec_bash(char  *slave_pty_name)
+{
+    int slave_pty_fd;
+    // get the slave PTY FD
+    if ((slave_pty_fd = open(slave_pty_name, O_RDWR)) < 0) {
+        perror("Oops. Could not open slave PTY FD");
         exit(EXIT_FAILURE);
     }
 
-    // run all the setup functions for the master pty
-    if ((master_pty_fd = setup_pty()) < 0) {
-        perror("Error setting up PTY\n");
+    // create a new session
+    if (setsid() < 0) {
+        perror("Could not set SID\n");
+        exit(EXIT_FAILURE);
     }
 
-    // get the slave pty name from the master pty
-    slave_pty_name = ptsname(master_pty_fd);
-    if (slave_pty_name == NULL ){
-        #ifdef DEBUG
-        printf("getting ptsname failed\n");
-        #endif
-    }
-
-    // create a new subprocess for bash
-    pid = fork();
-    switch(pid) {
-        case -1:
-            perror("Oops. Fork failure.\nDid you try a spoon?"); 
-            close(client_sockfd);
-            exit(1);
-            break;
-        case 0: // child
-            // PTY Slave begins here
-
-            // close child's connection to master pty and client socket
-            close(master_pty_fd);
-            close(client_sockfd);
-
-            // setup the slave pty
-
-            int slave_pty_fd;
-
-            // create a new session
-            if (setsid() < 0) {
-                perror("Could not set SID\n");
-                exit(EXIT_FAILURE);
-            }
-
-            // get the slave PTY FD
-            if ((slave_pty_fd = open(slave_pty_name, O_RDWR)) < 0) {
-                perror("Oops. Could not open slave PTY FD");
-                exit(EXIT_FAILURE);
-            }
-
-
-            // redirect in, out, and error
-            for (int i = 0; i < 3; i++) {
-                if (dup2(slave_pty_fd, i) < 0) {
-                    perror("Oops. Dup2 error.\n");
-                    exit(EXIT_FAILURE);
-                }
-            }
-
-            // run bash
-            if (execlp("bash","bash",NULL) < 0) {
-                perror("Oops. Exec error.\n");
-                exit(EXIT_FAILURE);
-            }
-
-            // should not get here if all goes well.
-            // kill off errant processes if we do get here.
+    // redirect in, out, and error
+    for (int i = 0; i < 3; i++) {
+        if (dup2(slave_pty_fd, i) < 0) {
+            perror("Oops. Dup2 error.\n");
             exit(EXIT_FAILURE);
-
-        default: // parent
-            // PTY Master begins here
-            // the parent handles all the master pty fun
-            return_val = handle_pty_master(client_sockfd, master_pty_fd);
-            if (return_val < 0) {
-                kill(pid, SIGTERM);
-                exit(1);
-            }
-            break;
-
+        }
     }
-    return NULL;
+
+    // run bash
+    if (execlp("bash","bash",NULL) < 0) {
+        perror("Oops. Exec error.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // should not get here if all goes well.
+    // kill off errant processes if we do get here.
+    exit(EXIT_FAILURE);
 }
 
-int handle_pty_master(int client_sockfd, int master_pty_fd) 
+int setup_client_pty_epoll_units(int client_sockfd, int master_pty_fd) 
 {
     /* Take care of the read/write loops between 
-     * the client socket and the master PTY
+     * the client socket and the master PTY,
+     * and set up the epoll events for read/write 
+     * from the client.
      */
 
     struct epoll_event ev;
 
-
-    ev.events = EPOLLIN;
-    ev.data.fd = client_sockfd;
-
+    #ifdef DEBUG
     printf("adding epoll fd: %d\n", client_sockfd);
+    #endif
+    ev.events  = EPOLLIN;
+    ev.data.fd = client_sockfd;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, client_sockfd, &ev) == -1){
-        perror("epoll_ctl");
+        perror("epoll_ctl failed");
         return -1;
     }
 
+    #ifdef DEBUG
     printf("adding epoll fd: %d\n", master_pty_fd);
-    ev.events = EPOLLIN;
+    #endif
+    ev.events  = EPOLLIN;
     ev.data.fd = master_pty_fd;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, master_pty_fd, &ev) == -1) {
         perror("epoll_ctl");
         return -1;
     }
 
+    // add the two new FDs to the hacky hash map
     epoll_fds[master_pty_fd] = client_sockfd;
     epoll_fds[client_sockfd] = master_pty_fd;
     return 0;
 }
 
-int from_client_to_pty(int client_sockfd, int master_pty_fd) {
-    /* Read data from the client socket, and write 
-     * it to a master PTY FD.
-     *
-     * returns: 
-     *      0 when 0 bytes read, 
-     *      1 on successful read, and 
-     *      -1 on error
-     */
-    char  buffer[INPUT_SIZE];
-
-    // read from our client
-    int bytes_read = read(client_sockfd, buffer, sizeof(buffer));
-    if (bytes_read < 0) {
-        perror("cannot read from client\n");
-        return -1;
-    }
-    if (bytes_read == 0) {
-        #ifdef DEBUG
-        printf("Read 0 bytes from client\n");
-        #endif
-        return 0;
-    }
-    else {
-        // write to socket
-        if (write(master_pty_fd, buffer, bytes_read) < 0) {
-            perror("Oops. Write failure.\n");
-            return -1;
-        }
-    }
-    return 1;
-}
-
-
-int from_pty_to_client(int client_sockfd, int master_pty_fd) {
-    /* Read data from the master PTY, and write 
-     * it to the client socket.
-     *
-     * returns: 
-     *      0 when 0 bytes read, 
-     *      1 on successful read, and 
-     *      -1 on error
-     */
-    char  buffer[INPUT_SIZE];
-    int bytes_read = read(master_pty_fd, buffer, sizeof(buffer));
-
-    if (bytes_read < 0) {
-        return -1;
-    }
-
-    // if PTY returns empty string, return 0
-    if (bytes_read == 0) {
-        return 0;
-    }
-    else {
-        // write PTY data to client
-        if (write(client_sockfd, buffer, bytes_read) < 0) {
-            perror("Oops. Write failure.\n");
-            return -1;
-        }
-    }
-    return 1;
-}
-
-int setup_slave_pty(char *slave_pty_name) {
-    /* Sets up the slave PTY to redirect STDIN, 
-     * STDOUT, and STDERR, and run bash.
-     */
-
-
-    // shouldn't get here
-    return -1;
-
-}
-
-int setup_pty(void) {
+int setup_pty(void) 
+{
     /* Sets up the master PTY by calling 
      * the functions listed in the book
      */
@@ -421,61 +421,5 @@ int setup_pty(void) {
     return master_pty_fd;
 }
 
-int get_client_sockfd(int server_sockfd)
-{
-    /* Accepts new clients and returns 
-     * their FD
-     */
-    int       client_sockfd = 0;
-    socklen_t client_len;
-    struct    sockaddr_in client_address;
 
-
-    printf("server socket in use from accept: %d\n",server_sockfd);
-    client_len    = sizeof(client_address);
-
-    // seperate fd for each client
-    client_sockfd = accept(server_sockfd,
-            (struct sockaddr *)&client_address, 
-            &client_len);
-
-    if (client_sockfd < 0) {
-        perror("Oops. Error accepting connection");
-        close(client_sockfd);
-    }
-    return client_sockfd;
-}
-
-int setup_socket(void) 
-{
-    /* Performs the heavy lifting to get the 
-     * server off the ground
-     */
-    int       server_sockfd;
-    int       client_sockfd = 0;
-    socklen_t server_len;
-    struct    sockaddr_in server_address;
-    int option = 1;
-
-    server_sockfd                  = socket(AF_INET, SOCK_STREAM, 0);
-    server_address.sin_family      = AF_INET;
-    server_address.sin_addr.s_addr = htonl(INADDR_ANY);
-    server_address.sin_port        = htons(PORT);
-    server_len                     = sizeof(server_address);
-    setsockopt(server_sockfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option));
-
-    // use address for socket address to avoid pass by value
-    if (bind(server_sockfd, (struct sockaddr *)&server_address, server_len)< 0) {
-        perror("could not bind server");
-        exit(1);
-    }
-
-    // listen with a backlog of 5 connections
-    if ((listen(server_sockfd, 5) < 0)) { 
-        perror("Oops. Error \n"); 
-        close(client_sockfd);
-    }
-
-    return server_sockfd;
-}
 

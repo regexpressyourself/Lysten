@@ -5,103 +5,67 @@
 
 #define _DEFAULT_SOURCE
 #include <termios.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <stdio.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
 #include <sys/wait.h>
 
 #define SECRET     "cs407rembash\n"
 #define PORT       4070
 #define INPUT_SIZE 4096
 
-struct termios tty;
+int    set_non_canon_mode(int fd, struct termios *prev_tty);
+void   sigchld_handler(int signal);
+void   restore_tty_settings();
+void   exit_gracefully(int exit_status);
+int    connect_to_server(char *ip_addr);
+int    handle_protocol(int sockfd);
+void   handle_data_transfer(int from_fd, int to_fd, pid_t pid);
+int    setup_signal_handler();
+char*  get_ip_addr(int argc, char *argv[]);
 
-int  setup_socket(char *ip_addr);
-int  handle_protocol(int sockfd);
-int handle_stdin_to_sock(int sockfd);
-int handle_sock_to_stdout(int sockfd);
-int set_non_canon_mode(int fd, struct termios *prev_tty);
-void sigchld_handler(int signal);
-void restore_tty_settings();
-void exit_gracefully(int exit_status);
+struct termios tty;
 
 int main(int argc, char *argv[])
 {
-
     int   sockfd = 0;          // file descriptor for socket
-    int   temp_fd;
+    char* ip_addr;
     pid_t pid;
-    struct sigaction act;
-    act.sa_handler = sigchld_handler;
-    act.sa_flags = 0;
-    sigemptyset(&act.sa_mask);
-
-    if (sigaction(SIGCHLD, &act, NULL) < 0) {
-        perror("Oops. Could not make signal handler");
-        exit(EXIT_FAILURE); 
-    }
 
     // get argument from command line
-    if (argc != 2) {
-        //fprintf(stderr, "Please specify an IP address\n");
-        //exit(EXIT_FAILURE);
+    ip_addr = get_ip_addr(argc, argv);
 
-    }
-    char* ip_addr = "127.0.0.1";
-    //sockfd = setup_socket(argv[1]);
-    sockfd = setup_socket(ip_addr);
+    // setup signal handler
+    setup_signal_handler();
 
+    // connect to server
+    sockfd = connect_to_server(ip_addr);
 
-    if (set_non_canon_mode(STDIN_FILENO, &tty) < 0 ) {
-        perror("Could not set canonical mode");
-    }
+    // set non_canonical mode
+    set_non_canon_mode(STDIN_FILENO, &tty);
 
-    if (handle_protocol(sockfd) < 0) {
-        close(sockfd);
-        exit(1);
-    }
+    // handle protocol with server
+    handle_protocol(sockfd);
 
     // fork off for input/output
     pid = fork();
+
     switch(pid) {
         case -1:
-                perror("Oops. Fork failure.\nDid you try a spoon?"); 
-                close(sockfd);
+            perror("Oops. Fork failure.\nDid you try a spoon?"); 
+            close(sockfd);
         case 0:
             // child process reads from stdin and writes to socket
+            pid = getppid();
             while (1) {
-                temp_fd = handle_stdin_to_sock(sockfd); 
-                if (temp_fd < 0) {
-                    pid = getppid();
-                    kill(pid, SIGTERM);
-                    exit(1);
-                }
-                else if (temp_fd == 0) {
-                    pid = getppid();
-                    kill(pid, SIGTERM);
-                    exit(0);
-                }
-                else {continue;}
+                handle_data_transfer(STDIN_FILENO, sockfd, pid); 
             }
         default:
             // parent reads from socket and writes to stdout
             while (1) {
-                temp_fd = handle_sock_to_stdout(sockfd);
-                if (temp_fd < 0) {
-                    kill(pid, SIGTERM);
-                    exit(1);
-                }
-                else if (temp_fd == 0) {
-                    kill(pid, SIGTERM);
-                    exit(0);
-                }
-                else {continue;}
+                handle_data_transfer(sockfd, STDOUT_FILENO, pid); 
             }
     }
 
@@ -112,65 +76,66 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
 }
 
-int handle_stdin_to_sock(int sockfd)
+char* get_ip_addr(int argc, char *argv[]) 
 {
-    int    bytes_read;          // hold how many bytes were read from socket
-    char   buffer[INPUT_SIZE];  // general-purpose buffer to hold strings
-    // read from stdin
-    bytes_read = read(STDIN_FILENO, &buffer, sizeof(buffer));
-    if (bytes_read < 0){ 
-        #ifdef DEBUG
-        perror("Oops. Read failure from STDIN to socket.\n"); 
-        #endif
-        close(sockfd);
-        return -1;
+    char* ip_addr;
+#ifndef DEBUG
+    if (argc != 2) {
+        fprintf(stderr, "Please specify an IP address\n");
+        exit(EXIT_FAILURE);
     }
-    else if (bytes_read == 0 ) {
-        #ifdef DEBUG
-        printf("Read 0 bytes from STDIN.\n"); 
-        #endif
-        close(sockfd);
-        return 0;
-    }
-    // write to socket
-    if (write(sockfd, buffer, bytes_read) < 0){ 
-        perror("Oops. Write failure.\n"); 
-        close(sockfd);
+    ip_addr = argv[1];
+#endif
+
+#ifdef DEBUG
+    ip_addr = "127.0.0.1";
+#endif
+    return ip_addr;
+}
+
+int setup_signal_handler()
+{
+    struct sigaction act;
+    act.sa_handler = sigchld_handler;
+    act.sa_flags = 0;
+    sigemptyset(&act.sa_mask);
+
+    if (sigaction(SIGCHLD, &act, NULL) < 0) {
+        perror("Oops. Could not make signal handler");
+        exit(EXIT_FAILURE);
         return -1;
     }
     return 1;
 }
 
-int handle_sock_to_stdout(int sockfd)
+void handle_data_transfer(int from_fd, int to_fd, pid_t pid)
 {
     int    bytes_read;          // hold how many bytes were read from socket
     char   buffer[INPUT_SIZE];  // general-purpose buffer to hold strings
-    // read from socket
-    bytes_read = read(sockfd, &buffer, sizeof(buffer));
+
+    // read from stdin
+    bytes_read = read(from_fd, &buffer, sizeof(buffer));
     if (bytes_read < 0){ 
-        perror("Oops. Read failure from socket to STDOUT.\n"); 
-        close(sockfd);
-        return -1;
+#ifdef DEBUG
+        fprintf(stderr, "Oops. Read failure from %d to %d.\n", from_fd, to_fd); 
+#endif
+        kill(pid, SIGTERM);
+        exit(1);
     }
-
-    // if socket returns empty string, return 0
     else if (bytes_read == 0 ) {
-        #ifdef DEBUG
-        printf("Read 0 bytes from socket.\n"); 
-        #endif
-        close(sockfd);
-        return 0;
+#ifdef DEBUG
+        fprintf(stderr, "Read 0 bytes from %d.\n", from_fd); 
+#endif
+        kill(pid, SIGTERM);
+        exit(0);
     }
-
-    else {
-        // write socket data to stdout
-        if (write(STDOUT_FILENO, buffer, bytes_read) < 0){ 
-            perror("Oops. Write failure.\n"); 
-            close(sockfd);
-            return -1;
-        }
+    // write to socket
+    if (write(to_fd, buffer, bytes_read) < 0){ 
+        fprintf(stderr, "Oops. Write failure to %d.\n", to_fd); 
+        kill(pid, SIGTERM);
+        exit(1);
     }
-    return 1;
+    return;
 }
 
 int handle_protocol(int sockfd) 
@@ -182,32 +147,32 @@ int handle_protocol(int sockfd)
     if ((bytes_read = read(sockfd, &buffer, sizeof(buffer))) < 0){ 
         perror("Oops. Read failure in handle_protocol <rembash>.\n"); 
         close(sockfd);
-        return -1;
+        exit(EXIT_FAILURE);
     }
 
     // send secret to server
     if (write(sockfd, SECRET, strlen(SECRET)) < 0){ 
-        perror("Oops. Write failure.\n"); 
+        perror("Oops. Write failure sending secret.\n"); 
         close(sockfd);
-        return -1;
+        exit(EXIT_FAILURE);
     }
 
     // get either the "<ok>" or "<error>" response from the server
     if ((bytes_read = read(sockfd, &buffer, sizeof(buffer))) < 0){ 
         perror("Oops. Read failure in handle_protocol <ok>.\n"); 
         close(sockfd);
-        return -1;
+        exit(EXIT_FAILURE);
     }
     if (write(STDOUT_FILENO, buffer, bytes_read) < 0){ 
         perror("Oops. Write failure.\n"); 
         close(sockfd);
-        return -1;
+        exit(EXIT_FAILURE);
     }
 
     return 1;
 }
 
-int setup_socket(char *ip_addr) 
+int connect_to_server(char *ip_addr) 
 {
     int    sockfd = 0;          // file descriptor for socket
     struct sockaddr_in address; // address of server
@@ -217,20 +182,22 @@ int setup_socket(char *ip_addr)
     address.sin_family = AF_INET;
     address.sin_port   = htons(PORT);
 
+    // set up address from string
     if (inet_aton(ip_addr, &address.sin_addr) == 0) {
-        #ifdef DEBUG
-        fprintf(stderr, "Invalid address\n");
-        #endif
+#ifdef DEBUG
+        fprintf(stderr, "Error: Invalid address\n");
+#endif
         exit(EXIT_FAILURE);
     }
 
     // connect socket to server
     if (connect(sockfd, (struct sockaddr *)&address, sizeof(address))){
-        perror("Oops. Client could not connect.\n"); 
+        perror("Oops. Error calling connect.\n"); 
         close(sockfd);
+        exit(EXIT_FAILURE);
     }
-    return sockfd;
 
+    return sockfd;
 }
 
 int set_non_canon_mode(int fd, struct termios *prev_tty)
@@ -238,53 +205,55 @@ int set_non_canon_mode(int fd, struct termios *prev_tty)
     struct termios temp_tty;
 
     if (tcgetattr(fd, &temp_tty) == -1){
-        perror("problem in tcgeattr\n");
+        perror("Error getting terminal attributes\n");
+        perror("Warning: Could not set non canonical mode\n");
         return -1;
     }
 
     if (prev_tty != NULL)
         *prev_tty = temp_tty;
 
-    temp_tty.c_lflag &= ~(ICANON | ECHO);
-    temp_tty.c_lflag |= ISIG;
-    temp_tty.c_iflag &= ~ICRNL;
-    temp_tty.c_cc[VMIN] = 1;
+    temp_tty.c_lflag    &= ~(ICANON | ECHO);
+    temp_tty.c_lflag    |= ISIG;
+    temp_tty.c_iflag    &= ~ICRNL;
+    temp_tty.c_cc[VMIN]  = 1;
     temp_tty.c_cc[VTIME] = 0;
 
     if (tcsetattr(fd, TCSAFLUSH, &temp_tty) == -1){
-        perror("problem in tcsetattr\n");
+        perror("Error setting terminal attributes\n");
+        perror("Warning: Could not set non canonical mode\n");
         return -1;
     }
+
     return 0;
 }
 
 void sigchld_handler(int signal)
 {
-  exit_gracefully(EXIT_SUCCESS);
-
+    exit_gracefully(EXIT_SUCCESS);
 }
 
 void restore_tty_settings()
 {
-  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &tty) == -1) {
-    perror("Oops. Could not restoring TTY attributes ");
-    exit(EXIT_FAILURE); 
-  }
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &tty) == -1) {
+        perror("Oops. Could not restoring TTY attributes ");
+        exit(EXIT_FAILURE); 
+    }
 
-  return;
+    return;
 }
 
 void exit_gracefully(int exit_status)
 {
-  restore_tty_settings();
+    restore_tty_settings();
 
-  int childstatus;
-  wait(&childstatus);
+    int childstatus;
+    wait(&childstatus);
 
-  if (exit_status==EXIT_FAILURE || 
-          !WIFEXITED(childstatus) || 
-          WEXITSTATUS(childstatus) != EXIT_SUCCESS)
-    exit(EXIT_FAILURE);
+    if (exit_status==EXIT_FAILURE || 
+            !WIFEXITED(childstatus) || 
+            WEXITSTATUS(childstatus) != EXIT_SUCCESS)
+        exit(EXIT_FAILURE);
 
-  exit(EXIT_SUCCESS);
+    exit(EXIT_SUCCESS);
 }
