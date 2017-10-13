@@ -42,7 +42,7 @@
 
 //Declared constants:
 #define PORTNUM 4070
-#define SECRET "cs407rembash"
+#define SECRET "cs407rembash\n"
 
 
 //Function prototypes:
@@ -132,7 +132,7 @@ void carry_out_initial_protocol_exchange(int server_fd)
 {
   const char * const server1 = "<rembash>\n";
   const char * const server2 = "<ok>\n";
-  const char * const secret = "<" SECRET ">\n";
+  const char * const secret =  SECRET;
 
   char *sock_input;
 
