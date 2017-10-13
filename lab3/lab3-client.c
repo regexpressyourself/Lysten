@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
     set_non_canon_mode(STDIN_FILENO, &tty);
 
     // handle protocol with server
-    handle_protocol(sockfd);
+    //handle_protocol(sockfd);
 
     // fork off for input/output
     pid = fork();

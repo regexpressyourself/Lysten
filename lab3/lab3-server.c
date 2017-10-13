@@ -3,6 +3,8 @@
  * CS 407
  */
 #define _XOPEN_SOURCE 600
+#define _POSIX_C_SOURCE 199309
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -12,7 +14,11 @@
 #include <pthread.h>
 #include <sys/wait.h>
 #include <sys/epoll.h>
+#include <time.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 
+#define TIMER_SIG SIGRTMAX
 #define SECRET "cs407rembash\n"
 #define PORT 4070
 #define INPUT_SIZE 1000
@@ -28,8 +34,11 @@ int handle_protocol(int client_sockfd);
 int exec_bash(char  *slave_pty_name);
 int setup_client_pty_epoll_units(int client_sockfd, int master_pty_fd);
 int setup_pty(void);
+int setup_timer(int client_sockfd);
+void timer_handler (int sig, siginfo_t *si, void *uc);
 
 int epoll_fds[MAX_EVENTS*2 + 5];
+timer_t timer_thread_ids[MAX_EVENTS + 5];
 int epfd;
 
 int main()
@@ -215,6 +224,52 @@ int accept_new_client(int server_sockfd)
     return client_sockfd;
 }
 
+void timer_handler (int sig, siginfo_t *si, void *uc)
+{
+    * (int *) si->si_ptr = 1;
+}
+
+int setup_timer(int client_sockfd)
+{
+    struct itimerspec timer;
+    struct sigaction sa;
+    struct sigevent sev;
+    timer_t timerid;
+    int timer_flag = 0;
+
+    timer.it_value.tv_sec = 3;
+    timer.it_value.tv_nsec = 0;
+    timer.it_interval.tv_sec = 0;
+    timer.it_interval.tv_nsec = 0;
+
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = timer_handler;
+
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGALRM, &sa, NULL) == -1) {
+        perror("Error setting sigaction\n");
+        return -1;
+    }
+
+    sev.sigev_signo = SIGALRM;
+    sev.sigev_notify = SIGEV_THREAD_ID;
+    sev.sigev_value.sival_ptr = &timer_flag;
+    sev._sigev_un._tid = syscall(SYS_gettid);
+
+    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
+        perror("Error creating timer\n");
+        return -1;
+    }
+
+    if (timer_settime(timerid, 0, &timer, NULL) == -1) {
+        perror("Error setting time on timer\n");
+        return -1;
+    }
+
+    return 1;
+}
+
 void * handle_client(void*client_sockfd_ptr) 
 {
     /* handle_client is called after a 
@@ -222,7 +277,6 @@ void * handle_client(void*client_sockfd_ptr)
      *
      * client_sockfd is the file descriptor for the socket.
      */
-
     int client_sockfd = *(int*)client_sockfd_ptr;
     free(client_sockfd_ptr);
     int   master_pty_fd;
@@ -230,13 +284,18 @@ void * handle_client(void*client_sockfd_ptr)
     char  *slave_pty_name;
     pid_t pid;
 
+    if (setup_timer(client_sockfd) == -1) {
+        close(client_sockfd);
+        pthread_exit(NULL);
+    }
+
     // handle rembash protocol
     if (handle_protocol(client_sockfd) == -1) {
         #ifdef DEBUG
         printf("Error in handle_protocol()");
         #endif
         close(client_sockfd);
-        exit(EXIT_FAILURE);
+        pthread_exit(NULL);
     }
 
     // run all the setup functions for the master pty
@@ -296,28 +355,28 @@ int handle_protocol(int client_sockfd)
     // send "<rembash>" to the client upon connection
     if (write(client_sockfd, rembash_string, strlen(rembash_string))< 0){
         perror("Oops. Error writing to client.\n"); 
-        close(client_sockfd);
+        return -1;
     }
 
     // wait to read the secret word from client
     if ((bytes_read = read(client_sockfd, buffer, sizeof(buffer)))< 0){
         perror("Oops. Error reading from client.\n"); 
-        close(client_sockfd);
+        return -1;
     }
 
     // if the secret is incorrect, close the connection
     if (strcmp(buffer, SECRET) != 0) {
         if (write(client_sockfd, error_string, strlen(error_string)) < 0){
             perror("Oops. Error writing to socket\n"); 
+            return -1;
         }
-        close(client_sockfd);
         return -1;
     }
 
     // if the secret was correct, send <ok>
     if (write(client_sockfd, ok_string, strlen(ok_string)) < 0){
         perror("Oops. Error writing to client.\n"); 
-        close(client_sockfd);
+        return -1;
     }
     return 1;
 }
