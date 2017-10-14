@@ -1,21 +1,22 @@
-/* lab2-client.c
+/* lab3-client.c
  * Sam Messina
  * CS 407
  */
 
 #define _DEFAULT_SOURCE
-#include <termios.h>
-#include <stdio.h>
 #include <arpa/inet.h>
-#include <unistd.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <termios.h>
+#include <unistd.h>
 
-#define SECRET     "cs407rembash\n"
-#define PORT       4070
 #define INPUT_SIZE 4096
+#define PORT       4070
+#define SECRET     "cs407rembash\n"
 
+char*  get_ip_addr(int argc, char *argv[]);
 int    set_non_canon_mode(int fd, struct termios *prev_tty);
 void   sigchld_handler(int signal);
 void   restore_tty_settings();
@@ -24,7 +25,6 @@ int    connect_to_server(char *ip_addr);
 int    handle_protocol(int sockfd);
 void   handle_data_transfer(int from_fd, int to_fd, pid_t pid);
 int    setup_signal_handler();
-char*  get_ip_addr(int argc, char *argv[]);
 
 struct termios tty;
 
@@ -47,7 +47,7 @@ int main(int argc, char *argv[])
     set_non_canon_mode(STDIN_FILENO, &tty);
 
     // handle protocol with server
-    //handle_protocol(sockfd);
+    handle_protocol(sockfd);
 
     // fork off for input/output
     pid = fork();

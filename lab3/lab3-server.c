@@ -1,53 +1,55 @@
-/* lab2-server.c
+/* lab3-server.c
  * Sam Messina
  * CS 407
  */
+
 #define _XOPEN_SOURCE 600
 #define _POSIX_C_SOURCE 199309
 #define _GNU_SOURCE
-#include <stdio.h>
+#define TIMER_SIG SIGRTMAX
+
 #include <arpa/inet.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <string.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
-#include <sys/wait.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/epoll.h>
-#include <time.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
-#define TIMER_SIG SIGRTMAX
 #define SECRET "cs407rembash\n"
 #define PORT 4070
-#define INPUT_SIZE 1000
-#define MAX_EVENTS 1000
+#define INPUT_SIZE 4096
+#define MAX_EVENTS 20
 
-int setup_server(void);
+int    setup_server(void);
 void * epoll_wait_loop(void*arg);
-int transfer_data(int in_fd, int out_fd);
-int close_hung_fds(int hung_fd);
-int accept_new_client(int server_sockfd);
+int    transfer_data(int in_fd, int out_fd);
+int    close_hung_fds(int hung_fd);
+int    accept_new_client(int server_sockfd);
 void * handle_client(void*client_sockfd_ptr);
-int handle_protocol(int client_sockfd);
-int exec_bash(char  *slave_pty_name);
-int setup_client_pty_epoll_units(int client_sockfd, int master_pty_fd);
-int setup_pty(void);
-int setup_timer(int client_sockfd);
-void timer_handler (int sig, siginfo_t *si, void *uc);
+void   timer_handler (int sig, siginfo_t *si, void *uc);
+int    setup_timer(int client_sockfd);
+int    handle_protocol(int client_sockfd);
+int    exec_bash(char  *slave_pty_name);
+int    setup_client_pty_epoll_units(int client_sockfd, int master_pty_fd);
+int    setup_pty(void);
 
 int epoll_fds[MAX_EVENTS*2 + 5];
-timer_t timer_thread_ids[MAX_EVENTS + 5];
 int epfd;
 
 int main()
 {
-    int        server_sockfd;
-    int        client_sockfd = 0;
-    int       *client_sockfd_ptr;
-    pthread_t epoll_threadid;
-    pthread_t temp_threadid;
+    int        server_sockfd;     // socket fd for the server
+    int        client_sockfd = 0; // client socket fd returned from accept()
+    int       *client_sockfd_ptr; // memory to hold the client socket
+    pthread_t epoll_threadid;     // epoll wait loop thread
+    pthread_t temp_threadid;      // handle new client protocol thread
 
     // setup our server
     server_sockfd = setup_server();
@@ -56,7 +58,9 @@ int main()
     epfd = epoll_create1(EPOLL_CLOEXEC);
 
     // start the epoll wait loop
-    pthread_create(&epoll_threadid, NULL, epoll_wait_loop, NULL);
+    if (pthread_create(&epoll_threadid, NULL, epoll_wait_loop, NULL) == 
+            (EAGAIN || EINVAL || EPERM)) {
+    }
 
     // ignore bash's signals, as we don't care about exit status
     signal(SIGCHLD,SIG_IGN);
@@ -172,7 +176,7 @@ int transfer_data(int in_fd, int out_fd)
         return 0;
     }
 
-    bytes_read = write(out_fd, buf, sizeof(buf));
+    bytes_read = write(out_fd, buf, strlen(buf));
     if (bytes_read == -1) {
         fprintf(stderr, "Error writing to : %d\n", out_fd);
         return -1;
@@ -224,51 +228,6 @@ int accept_new_client(int server_sockfd)
     return client_sockfd;
 }
 
-void timer_handler (int sig, siginfo_t *si, void *uc)
-{
-    * (int *) si->si_ptr = 1;
-}
-
-int setup_timer(int client_sockfd)
-{
-    struct itimerspec timer;
-    struct sigaction sa;
-    struct sigevent sev;
-    timer_t timerid;
-    int timer_flag = 0;
-
-    timer.it_value.tv_sec = 3;
-    timer.it_value.tv_nsec = 0;
-    timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_nsec = 0;
-
-    sa.sa_flags = SA_SIGINFO;
-    sa.sa_sigaction = timer_handler;
-
-    sigemptyset(&sa.sa_mask);
-
-    if (sigaction(SIGALRM, &sa, NULL) == -1) {
-        perror("Error setting sigaction\n");
-        return -1;
-    }
-
-    sev.sigev_signo = SIGALRM;
-    sev.sigev_notify = SIGEV_THREAD_ID;
-    sev.sigev_value.sival_ptr = &timer_flag;
-    sev._sigev_un._tid = syscall(SYS_gettid);
-
-    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
-        perror("Error creating timer\n");
-        return -1;
-    }
-
-    if (timer_settime(timerid, 0, &timer, NULL) == -1) {
-        perror("Error setting time on timer\n");
-        return -1;
-    }
-
-    return 1;
-}
 
 void * handle_client(void*client_sockfd_ptr) 
 {
@@ -337,6 +296,52 @@ void * handle_client(void*client_sockfd_ptr)
             pthread_exit(NULL);
     }
     return NULL;
+}
+
+void timer_handler (int sig, siginfo_t *si, void *uc)
+{
+    * (int *) si->si_ptr = 1;
+}
+
+int setup_timer(int client_sockfd)
+{
+    struct itimerspec timer;
+    struct sigaction sa;
+    struct sigevent sev;
+    timer_t timerid;
+    int timer_flag = 0;
+
+    timer.it_value.tv_sec = 3;
+    timer.it_value.tv_nsec = 0;
+    timer.it_interval.tv_sec = 0;
+    timer.it_interval.tv_nsec = 0;
+
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = timer_handler;
+
+    sigemptyset(&sa.sa_mask);
+
+    if (sigaction(SIGALRM, &sa, NULL) == -1) {
+        perror("Error setting sigaction\n");
+        return -1;
+    }
+
+    sev.sigev_signo = SIGALRM;
+    sev.sigev_notify = SIGEV_THREAD_ID;
+    sev.sigev_value.sival_ptr = &timer_flag;
+    sev._sigev_un._tid = syscall(SYS_gettid);
+
+    if (timer_create(CLOCK_REALTIME, &sev, &timerid) == -1) {
+        perror("Error creating timer\n");
+        return -1;
+    }
+
+    if (timer_settime(timerid, 0, &timer, NULL) == -1) {
+        perror("Error setting time on timer\n");
+        return -1;
+    }
+
+    return 1;
 }
 
 int handle_protocol(int client_sockfd) 
