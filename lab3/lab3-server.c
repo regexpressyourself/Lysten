@@ -22,21 +22,21 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SECRET "cs407rembash\n"
-#define PORT 4070
+#define SECRET     "cs407rembash\n"
+#define PORT       4070
 #define INPUT_SIZE 4096
 #define MAX_EVENTS 20
 
 int     setup_server(void);
-void *  epoll_wait_loop(void*arg);
+void *  epoll_wait_loop(void * arg);
 int     transfer_data(int in_fd, int out_fd);
 int     close_hung_fds(int hung_fd);
 int     accept_new_client(int server_sockfd);
-void *  handle_client(void*client_sockfd_ptr);
-void    timer_handler (int sig, siginfo_t *si, void *uc);
+void *  handle_client(void * client_sockfd_ptr);
+void    timer_handler(int sig, siginfo_t * si, void * uc);
 timer_t setup_timer(int client_sockfd);
 int     handle_protocol(int client_sockfd);
-int     exec_bash(char  *slave_pty_name);
+int     exec_bash(char  * slave_pty_name);
 int     setup_client_pty_epoll_units(int client_sockfd, int master_pty_fd);
 int     setup_pty(void);
  
@@ -140,7 +140,6 @@ int setup_server(void)
     return server_sockfd;
 }
 
-
 void * epoll_wait_loop(void*arg)
 {
     int    ready; // how many ready epoll events
@@ -170,7 +169,7 @@ void * epoll_wait_loop(void*arg)
                 printf("Ready epoll fd: %d\n", sfd);
                 #endif
 
-                // transfer data fromthe ready epoll event to its compatriot
+                // transfer data from the ready epoll event to its compatriot
                 if (transfer_data(sfd, epoll_fds[sfd]) <= 0) {
                     close_hung_fds(sfd);
                     close_hung_fds(epoll_fds[sfd]);
@@ -251,7 +250,6 @@ int accept_new_client(int server_sockfd)
     }
     return client_sockfd;
 }
-
 
 void * handle_client(void*client_sockfd_ptr) 
 {
@@ -389,7 +387,9 @@ int handle_protocol(int client_sockfd)
     const char * const error_string   = "<error>\n";
     int  bytes_read;
     char buffer[INPUT_SIZE];
+    #ifdef DEBUG
     printf(" handle_protocol'sclient fd: %d\n",client_sockfd);
+    #endif
 
     // send "<rembash>" to the client upon connection
     if (write(client_sockfd, rembash_string, strlen(rembash_string))< 0){

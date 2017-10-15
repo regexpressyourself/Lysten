@@ -17,14 +17,14 @@
 #define SECRET     "cs407rembash\n"
 
 char*  get_ip_addr(int argc, char *argv[]);
+int    setup_signal_handler();
+void   handle_data_transfer(int from_fd, int to_fd, pid_t pid);
 int    set_non_canon_mode(int fd, struct termios *prev_tty);
 void   sigchld_handler(int signal);
 void   restore_tty_settings();
 void   exit_gracefully(int exit_status);
 int    connect_to_server(char *ip_addr);
 int    handle_protocol(int sockfd);
-void   handle_data_transfer(int from_fd, int to_fd, pid_t pid);
-int    setup_signal_handler();
 
 struct termios tty;
 
@@ -91,6 +91,34 @@ char* get_ip_addr(int argc, char *argv[])
     ip_addr = "127.0.0.1";
 #endif
     return ip_addr;
+}
+
+int connect_to_server(char *ip_addr) 
+{
+    int    sockfd = 0;          // file descriptor for socket
+    struct sockaddr_in address; // address of server
+
+    // set up socket
+    sockfd             = socket(AF_INET, SOCK_STREAM, 0);
+    address.sin_family = AF_INET;
+    address.sin_port   = htons(PORT);
+
+    // set up address from string
+    if (inet_aton(ip_addr, &address.sin_addr) == 0) {
+#ifdef DEBUG
+        fprintf(stderr, "Error: Invalid address\n");
+#endif
+        exit(EXIT_FAILURE);
+    }
+
+    // connect socket to server
+    if (connect(sockfd, (struct sockaddr *)&address, sizeof(address))){
+        perror("Oops. Error calling connect.\n"); 
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    return sockfd;
 }
 
 int setup_signal_handler()
@@ -172,34 +200,6 @@ int handle_protocol(int sockfd)
     return 1;
 }
 
-int connect_to_server(char *ip_addr) 
-{
-    int    sockfd = 0;          // file descriptor for socket
-    struct sockaddr_in address; // address of server
-
-    // set up socket
-    sockfd             = socket(AF_INET, SOCK_STREAM, 0);
-    address.sin_family = AF_INET;
-    address.sin_port   = htons(PORT);
-
-    // set up address from string
-    if (inet_aton(ip_addr, &address.sin_addr) == 0) {
-#ifdef DEBUG
-        fprintf(stderr, "Error: Invalid address\n");
-#endif
-        exit(EXIT_FAILURE);
-    }
-
-    // connect socket to server
-    if (connect(sockfd, (struct sockaddr *)&address, sizeof(address))){
-        perror("Oops. Error calling connect.\n"); 
-        close(sockfd);
-        exit(EXIT_FAILURE);
-    }
-
-    return sockfd;
-}
-
 int set_non_canon_mode(int fd, struct termios *prev_tty)
 {
     struct termios temp_tty;
@@ -224,7 +224,6 @@ int set_non_canon_mode(int fd, struct termios *prev_tty)
         perror("Warning: Could not set non canonical mode\n");
         return -1;
     }
-
     return 0;
 }
 
@@ -250,10 +249,10 @@ void exit_gracefully(int exit_status)
     int childstatus;
     wait(&childstatus);
 
-    if (exit_status==EXIT_FAILURE || 
-            !WIFEXITED(childstatus) || 
-            WEXITSTATUS(childstatus) != EXIT_SUCCESS)
+    if (exit_status==EXIT_FAILURE || !WIFEXITED(childstatus) || 
+            WEXITSTATUS(childstatus) != EXIT_SUCCESS) {
         exit(EXIT_FAILURE);
+    }
 
     exit(EXIT_SUCCESS);
 }
