@@ -1,11 +1,11 @@
 all: current-set
 
-current-set: debug-lab3-client debug-lab3-server
+current-set: refactor-lab3-client refactor-lab3-server
 
-tc: /home/zookeeprr/scripts/show-client.sh
+sc: /home/zookeeprr/scripts/show-client.sh
 	bash /home/zookeeprr/scripts/show-client.sh
 
-ts: /home/zookeeprr/scripts/show-server.sh
+ss: /home/zookeeprr/scripts/show-server.sh
 	bash /home/zookeeprr/scripts/show-server.sh
 
 
@@ -13,11 +13,18 @@ ts: /home/zookeeprr/scripts/show-server.sh
 mvim: ./lab3/lab3-client.c ./lab3/lab3-server.c
 	nvim ./lab3/lab3-client.c ./lab3/lab3-server.c
 
-refactor-lab3-client: ./lab3/lab3-client.c
+refactor-lab3-client: ./lab3/refactor/lab3-refactor-client.c
 	gcc -Wall -lrt -std=gnu99 -pthread -D DEBUG -o "client" ./lab3/refactor/lab3-refactor-client.c
 
-refactor-lab3-server: ./lab3/lab3-server.c
+refactor-lab3-server: ./lab3/refactor/lab3-refactor-server.c
 	gcc -Wall -lrt -std=gnu99 -pthread -D DEBUG -o "server" ./lab3/refactor/lab3-refactor-server.c
+
+debug-lab4-client: ./lab4/lab4-client.c
+	gcc -lrt -Wall -std=gnu99 -pthread -D DEBUG -o "client" ./lab4/lab4-client.c
+
+debug-lab4-server: ./lab4/lab4-server.c
+	gcc -lrt -Wall -std=gnu99 -pthread -D DEBUG -o "server" ./lab4/lab4-server.c
+
 
 debug-lab3-client: ./lab3/lab3-client.c
 	gcc -lrt -Wall -std=gnu99 -pthread -D DEBUG -o "client" ./lab3/lab3-client.c
