@@ -64,7 +64,7 @@ int tpool_init(void (*process_task)(int)) {
 
   // create the threads
   if (initialize_pthreads() <= 0) {
-    perror("Could not initialize queue\n");
+    perror("Could not initialize threads\n");
     return 0;
   }
   return 1;
