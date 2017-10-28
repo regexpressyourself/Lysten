@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <stdio.h>
 
+#define TASKS_PER_THREAD 4
+
 int   tpool_init(void (*process_task)(int));
 int   tpool_add_task(int newtask);
 int   add_task_to_queue(int newtask);
@@ -10,7 +12,7 @@ int   handle_flag_and_cond();
 int   check_if_full();
 int   initialize_queue();
 int   initialize_pthreads();
-void* thread_loop(void* thread_number);
+void* thread_loop();
 int   dequeue();
 void  print_queue_state();
 
@@ -64,7 +66,9 @@ int tpool_add_task(int newtask) {
   /* Add a new task to the queue of jobs */
 
 
-  printf("adding task %d\n", newtask);
+#ifdef DEBUG
+  printf("adding job %d\n", newtask);
+#endif
 
   // lock the queue
   pthread_mutex_lock(&(thread_pool.queue->queue_mut));
@@ -95,7 +99,9 @@ int handle_flag_and_cond() {
 
   // signal the thread that it's ready
   pthread_cond_signal(&(thread_pool.queue->cond));
-  printf("thread signaled!\n");
+#ifdef DEBUG
+  printf("thread signaled\n");
+#endif
   return 1;
 }
 
@@ -121,7 +127,9 @@ int check_if_full() {
   int size  = thread_pool.queue->size;
 
   if(((back + 1) % size) == front){
+#ifdef DEBUG
     perror("Queue is full, could not add task\n");
+#endif
     // make sure to unlock the queue before we return error
     pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
     return 0;
@@ -155,7 +163,7 @@ int initialize_queue() {
   // of threads to avoid idle threads)
   thread_pool.queue->front = 0;
   thread_pool.queue->back  = 0;
-  thread_pool.queue->size  = 4 * thread_pool.num_threads;
+  thread_pool.queue->size  = TASKS_PER_THREAD * thread_pool.num_threads;
   thread_pool.queue->flag  = 0;
 
   // malloc up some space for our queue
@@ -184,12 +192,8 @@ int initialize_pthreads() {
   thread_pool.thread_array = (pthread_t *) malloc(thread_pool.num_threads * sizeof(pthread_t));
 
   for(int i = 0; i < thread_pool.num_threads; i++){
-    // need to pass in the thread number for our eventual implementation
-    int *thread_number = (int*) malloc(sizeof(int));
-    *thread_number = i+1;
-
     // create the thread
-    if(pthread_create(&thread_pool.thread_array[i], &attr, thread_loop, thread_number) != 0){
+    if(pthread_create(&thread_pool.thread_array[i], &attr, thread_loop, NULL) != 0){
       perror("pthread creation failed\n");
       return 0;
     }
@@ -197,9 +201,9 @@ int initialize_pthreads() {
   return 1;
 }
 
-void* thread_loop(void* thread_number) {
-  // need to pass the thread number to the job function
-  int thread_num = *(int*)thread_number;
+void* thread_loop() {
+  // need to pass the job number to the job function
+  int job_num;
 
   while (1) {
     pthread_mutex_lock(&thread_pool.queue->flag_mut);
@@ -215,8 +219,9 @@ void* thread_loop(void* thread_number) {
     pthread_mutex_unlock(&thread_pool.queue->flag_mut);
 
     // dequeue the thread
-    if (dequeue() != 0) {
-      thread_pool.job(thread_num);
+    job_num = dequeue();
+    if (job_num != 0) {
+      thread_pool.job(job_num);
     }
   }
   return NULL;

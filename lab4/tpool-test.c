@@ -20,9 +20,10 @@ int main() {
 
   // create 50 tasks
   for (int i = 0; i < 50; i++) {
-
     if (tpool_add_task(i) <= 0) {
-      fprintf(stderr, "Failed adding task to pool\n");
+#ifdef DEBUG
+      printf("Failed adding job to pool\n");
+#endif
       sleep(1);
       i--;
     }
