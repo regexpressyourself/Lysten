@@ -1,7 +1,6 @@
 all: current-set
 
-
-current-set: test-lab4 
+current-set: package-static-lab4
 
 sc: /home/zookeeprr/scripts/show-client.sh
 	bash /home/zookeeprr/scripts/show-client.sh
@@ -9,6 +8,20 @@ sc: /home/zookeeprr/scripts/show-client.sh
 ss: /home/zookeeprr/scripts/show-server.sh
 	bash /home/zookeeprr/scripts/show-server.sh
 
+compile-static-lab4-test: ./lab4/tpool-test.c
+	gcc -Wall -std=gnu99 -otesta ./lab4/tpool-test.c libtpool.a -pthread
+
+compile-shared-lab4-test: ./lab4/tpool-test.c
+	gcc -Wall -std=gnu99 -otestso ./lab4/tpool-test.c libtpool.so -pthread
+
+
+package-static-lab4: ./lab4/tpool.c
+	gcc -c -std=gnu99 ./lab4/tpool.c 
+	ar -cr libtpool.a tpool.o
+
+package-shared-lab4: ./lab4/tpool.c
+	gcc -Wall -std=gnu99 -fpic -c ./lab4/tpool.c 
+	gcc -shared -olibtpool.so tpool.o
 
 test-lab4: ./lab4/tpool-test.c
 	gcc -Wall -std=gnu99 -D DEBUG -otest ./lab4/tpool-test.c ./lab4/tpool.c -pthread
