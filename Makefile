@@ -1,6 +1,7 @@
 all: current-set
 
-current-set: refactor-lab3-client refactor-lab3-server
+
+current-set: test-lab4 
 
 sc: /home/zookeeprr/scripts/show-client.sh
 	bash /home/zookeeprr/scripts/show-client.sh
@@ -9,6 +10,11 @@ ss: /home/zookeeprr/scripts/show-server.sh
 	bash /home/zookeeprr/scripts/show-server.sh
 
 
+test-lab4: ./lab4/tpool-test.c
+	gcc -Wall -std=gnu99 -D DEBUG -otest ./lab4/tpool-test.c ./lab4/tpool.c -pthread
+
+debug-lab4: ./lab4/tpool.c
+	gcc -lrt -Wall -std=gnu99 -pthread -D DEBUG -o "tpool" ./lab4/tpool.c
 
 mvim: ./lab3/lab3-client.c ./lab3/lab3-server.c
 	nvim ./lab3/lab3-client.c ./lab3/lab3-server.c
@@ -19,11 +25,6 @@ refactor-lab3-client: ./lab3/refactor/lab3-refactor-client.c
 refactor-lab3-server: ./lab3/refactor/lab3-refactor-server.c
 	gcc -Wall -lrt -std=gnu99 -pthread -D DEBUG -o "server" ./lab3/refactor/lab3-refactor-server.c
 
-debug-lab4-client: ./lab4/lab4-client.c
-	gcc -lrt -Wall -std=gnu99 -pthread -D DEBUG -o "client" ./lab4/lab4-client.c
-
-debug-lab4-server: ./lab4/lab4-server.c
-	gcc -lrt -Wall -std=gnu99 -pthread -D DEBUG -o "server" ./lab4/lab4-server.c
 
 
 debug-lab3-client: ./lab3/lab3-client.c
