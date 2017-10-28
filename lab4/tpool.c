@@ -82,7 +82,7 @@ int tpool_add_task(int newtask) {
 
   // check if there's room in the queue and
   // add the task to the queue and handle the queue's pointers
-  if ((check_if_full() <= 0) &&
+  if ((check_if_full() <= 0) ||
       (add_task_to_queue(newtask) <= 0)) { 
     // make sure to unlock the queue before we return error
     pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
