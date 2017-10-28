@@ -3,10 +3,14 @@
 #include <unistd.h>
 #include <stdio.h>
 
+// 4 tasks per thread to avoid idle threads
 #define TASKS_PER_THREAD 4
 
+/* MAIN FUNCTIONS */
 int   tpool_init(void (*process_task)(int));
 int   tpool_add_task(int newtask);
+
+/* INTERNAL FUNCTIONS */
 int   add_task_to_queue(int newtask);
 int   handle_flag_and_cond();
 int   check_if_full();
@@ -14,9 +18,13 @@ int   initialize_queue();
 int   initialize_pthreads();
 void* thread_loop();
 int   dequeue();
+
+/* DEBUG FUNCTIONS */
 void  print_queue_state();
 
 typedef struct worker_queue_struct {
+  /* The overarching thread pool */
+
   int front;                 // the front index of the queue
   int back;                  // the back index of the queue
   int* queue_array;          // array of worker threads
@@ -28,16 +36,16 @@ typedef struct worker_queue_struct {
 } worker_queue_struct;
 
 typedef struct thread_pool_struct{
+  /* The worker queue to be passed to the thread pool */
+
   int num_threads;             // number of threads in the thread array
   worker_queue_struct * queue; // the struct containing the queueu
   pthread_t* thread_array;     // the array of ready threads
   void (* job) (int);          // the function to be called by all threads
 } thread_pool_struct; 
 
-// the overarching thread pool
-thread_pool_struct thread_pool; 
-
-// the worker queue to be passed to the thread pool
+// instantiate our thread pool and queue
+thread_pool_struct  thread_pool; 
 worker_queue_struct worker_queue; 
 
 int tpool_init(void (*process_task)(int)) {
@@ -65,33 +73,37 @@ int tpool_init(void (*process_task)(int)) {
 int tpool_add_task(int newtask) {
   /* Add a new task to the queue of jobs */
 
-
-#ifdef DEBUG
+  #ifdef DEBUG
   printf("adding job %d\n", newtask);
-#endif
+  #endif
 
   // lock the queue
   pthread_mutex_lock(&(thread_pool.queue->queue_mut));
 
   // check if there's room in the queue
-  if (check_if_full() <= 0) {
-    return 0;
-  }
+  if (check_if_full() <= 0) { 
+    // make sure to unlock the queue before we return error
+    pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
+    return 0; }
 
   // add the task to the queue and handle the queue's pointers
-  if (add_task_to_queue(newtask) <= 0) {
-    return 0;
-  }
+  if (add_task_to_queue(newtask) <= 0) { 
+    // make sure to unlock the queue before we return error
+    pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
+    return 0; }
+
+  // unlock the queue
+  pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
 
   // increment the flag and signal the condition to the thread
-  if (handle_flag_and_cond() <= 0) {
-    return 0;
-  }
+  if (handle_flag_and_cond() <= 0) { return 0; }
 
   return 1;
 }
 
 int handle_flag_and_cond() {
+  /* Increment flag and dignal condition */
+
   // lock the flag mutex and increment the flag
   pthread_mutex_lock(&thread_pool.queue->flag_mut);
   thread_pool.queue->flag += 1;
@@ -99,9 +111,9 @@ int handle_flag_and_cond() {
 
   // signal the thread that it's ready
   pthread_cond_signal(&(thread_pool.queue->cond));
-#ifdef DEBUG
+  #ifdef DEBUG
   printf("thread signaled\n");
-#endif
+  #endif
   return 1;
 }
 
@@ -115,23 +127,20 @@ int add_task_to_queue(int newtask) {
   back = (back + 1) % size;
   thread_pool.queue->back = back;
   print_queue_state();
-  pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
   return 1;
 }
 
 int check_if_full() {
-  /* check if queue is full */
+  /* Check if queue is full */
 
   int back  = thread_pool.queue->back;
   int front = thread_pool.queue->front;
   int size  = thread_pool.queue->size;
 
   if(((back + 1) % size) == front){
-#ifdef DEBUG
+  #ifdef DEBUG
     perror("Queue is full, could not add task\n");
-#endif
-    // make sure to unlock the queue before we return error
-    pthread_mutex_unlock(&(thread_pool.queue->queue_mut));
+  #endif
     return 0;
   }
   return 1;
@@ -202,6 +211,8 @@ int initialize_pthreads() {
 }
 
 void* thread_loop() {
+  /* Infinite loop to pop off ready jobs and assign them a thread */
+
   // need to pass the job number to the job function
   int job_num;
 
@@ -258,12 +269,12 @@ int dequeue() {
 
 void print_queue_state() {
   /* Print some debug statements about the queue */
-#ifdef DEBUG
+  #ifdef DEBUG
   printf("front: %d\n", thread_pool.queue->front);
   printf("back:  %d\n",  thread_pool.queue->back);
   printf("queue: ");
   for(int i = 0; i < thread_pool.queue->size; i++)
     printf(" %d, ", thread_pool.queue->queue_array[i]);
   printf("\n");
-#endif
+  #endif
 }
