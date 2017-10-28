@@ -241,7 +241,7 @@ void* thread_loop() {
 int dequeue() {
   /* Remove a job from the queue */
 
-  int front = thread_pool.queue->front;
+  int front       = thread_pool.queue->front;
   int queue_size  = thread_pool.queue->size;
   int popped_thread;
 
