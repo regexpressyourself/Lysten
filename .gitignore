@@ -2,3 +2,9 @@
 notes*
 client
 server
+*.o
+*.a
+*.so
+*testso
+*testa
+*testo
