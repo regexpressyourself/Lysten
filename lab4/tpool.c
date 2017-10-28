@@ -98,7 +98,7 @@ int tpool_add_task(int newtask) {
 }
 
 int handle_flag_and_cond() {
-  /* Increment flag and dignal condition */
+  /* Increment flag and signal condition */
 
   // lock the flag mutex and increment the flag
   pthread_mutex_lock(&thread_pool.queue->flag_mut);
