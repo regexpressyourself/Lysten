@@ -1,4 +1,4 @@
-all: package-static compile-static-test
+all: test
 
 compile-static-test: tpool-test.c tpool.a
 	gcc -Wall -std=gnu99 -otesta tpool-test.c tpool.a -pthread

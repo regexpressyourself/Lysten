@@ -1,14 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include "tpool.h"
 #include <unistd.h>
 #include <time.h>
-
+#include "tpool.h"
 
 void job(int task) {
+  // a 1 second job to test the thread pool
   printf("job %d registered\n", task);
-  sleep(2);
-  printf("job %d complete\n", task);
+  sleep(1);
+  printf("\t\t\tjob %d complete\n", task);
 }
 
 int main() {
@@ -19,16 +19,10 @@ int main() {
   }
 
   // create 50 tasks
-  for (int i = 0; i < 50; i++) {
-    if (tpool_add_task(i) <= 0) {
-#ifdef DEBUG
-      printf("Failed adding job to pool\n");
-#endif
-      sleep(1);
-      i--;
-    }
+  for (int i = 1; i <= 50; i++) {
+    if (tpool_add_task(i) <= 0) { printf("Error Adding Task\n");return 0; }
   }
-
-  sleep(1);
+  // wait for any errant tasks
+  sleep(5);
 }
 
