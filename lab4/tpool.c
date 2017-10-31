@@ -1,6 +1,6 @@
 /* Sam Messina
  * Thread Pool 
- * CS 407 - Lab 5
+ * CS 407 - Lab 4
  */
 
 #include <pthread.h>
