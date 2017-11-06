@@ -44,7 +44,7 @@ typedef struct client {
 
 int     setup_server(void);
 void *  epoll_wait_loop();
-void process_task(int fd);
+void    process_task(int fd);
 int     close_hung_fds(int hung_fd);
 int     accept_new_client();
 void *  handle_client(client_struct* client);
@@ -53,12 +53,12 @@ timer_t setup_timer(int client_sockfd);
 int     exec_bash(char  * slave_pty_name);
 int     add_fd_to_epoll(int client_sockfd);
 int     setup_pty(void);
-int check_protocol_secret(int client_sockfd);
-int write_protocol_string(int client_sockfd);
-client_struct* create_client(int fd);
-int kill_client(int fd);
-int transfer_data(int from_fd);
-int set_nonblocking(int fd);
+int     check_protocol_secret(int client_sockfd);
+int     write_protocol_string(int client_sockfd);
+void    create_client(int fd);
+int     kill_client(int fd);
+int     transfer_data(int from_fd);
+int     set_nonblocking(int fd);
 
 client_struct*  client_slab[MAX_EVENTS*2];
 int epfd;
@@ -66,25 +66,25 @@ int listening_sock;
 
 int main()
 {
-    tpool_init(process_task);
-
     // setup our server
     if (setup_server() == -1) {
         exit(EXIT_FAILURE);
     }
+
+    if (tpool_init(process_task) < 0) {
+        perror("Could not create initiate thread pool\n");
+        exit(EXIT_FAILURE); }
 
     signal(SIGCHLD, SIG_IGN);
 
     // create our epoll fd
     if ((epfd = epoll_create1(EPOLL_CLOEXEC)) == -1) {
         perror("Could not create epoll unit\n");
-        exit(EXIT_FAILURE);
-    }
+        exit(EXIT_FAILURE); }
 
     if (add_fd_to_epoll(listening_sock) < 0) {
         perror("Could not add listenening socket to epoll unit\n");
-        exit(EXIT_FAILURE);
-    }
+        exit(EXIT_FAILURE); }
 
     // start the epoll wait loop
     epoll_wait_loop();
@@ -181,6 +181,21 @@ void process_task(int fd)
                 break;
             case established :
                 printf("state: established\n");
+                printf("\n==================================================\n");
+                printf("Client FD:\t%d\n", client->sock_fd);
+                printf("PTY FD:   \t%d\n", client->pty_fd);
+                printf("Slab:     \t[");
+                for (int i = 0; i<15; i++) {
+                    if (client_slab[i]){
+                        printf("1, ");
+                    }
+                    else{
+                        printf("0, ");
+                    }
+                }
+                printf("0]\n");
+                printf("==================================================\n");
+
                 transfer_data(fd);
                 break;
             case unwritten :
@@ -330,6 +345,7 @@ timer_t setup_timer(int client_sockfd)
 
      return timerid;
      */
+    return NULL;
 }
 
 int write_protocol_string(int client_sockfd)
@@ -470,7 +486,7 @@ int setup_pty(void)
     return master_pty_fd;
 }
 
-client_struct* create_client(int fd) 
+void create_client(int fd) 
 {
     client_struct client;
     client.sock_fd = fd;
@@ -486,9 +502,10 @@ int kill_client(int fd)
     epoll_ctl(epfd, EPOLL_CTL_DEL, client->sock_fd, NULL);
     epoll_ctl(epfd, EPOLL_CTL_DEL, client->pty_fd, NULL);
     printf("CLOSING FDS\n");
+    client_slab[client->pty_fd] = NULL;
+    client_slab[client->sock_fd] = NULL;
     close(client->pty_fd);
     close(client->sock_fd);
-    client_slab[fd] = NULL;
     printf("CLIENT DEAD\n");
     return 1;
 }
