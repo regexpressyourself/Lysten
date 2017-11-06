@@ -1,7 +1,22 @@
 /* lab5-server.c
  * Sam Messina
  * CS 407
+ *
+ *
+ *
+ *
+ * TODO
+ * [ ] reimplement timers
+ * [ ] look into partial write problem/fix busy wait in transfer_data()
+ * [ ] make sure edge triggered is being used properly
+ * [ ] 
+ * [ ] 
+ * [ ] 
+ * [ ] 
+ * [ ] 
+ * [ ] 
  */
+
 
 #define _XOPEN_SOURCE 600
 #define _POSIX_C_SOURCE 199309
@@ -189,7 +204,7 @@ void process_task(int fd)
                 break;
             case unwritten :
                 printf("state: unwritten\n");
-                transfer_data(fd);
+                send_message(client->sock_fd, client->buf);
                 break;
             case terminated :
                 printf("state: terminated\n");
@@ -495,26 +510,32 @@ int transfer_data(int from_fd)
 {
     client_struct* client = client_slab[from_fd];
     int to_fd = (client->pty_fd == from_fd) ?  client->sock_fd : client->pty_fd;
-    client->state = unwritten;
 
     char buff[4096];
     memset(buff, 0, 4096);
 
-    ssize_t nread, nwritten, total;
+    ssize_t nread, nwritten;
 
     errno = 0;  
-    while (!errno && (nread = read(from_fd,buff,4096)) > 0) {
-        total = 0;
-        do {
-            nwritten = write(to_fd,buff+total,nread-total);
-            if (nwritten == -1 && errno != EAGAIN)
-                break;  //true error when writing so stop do-while
-            total += nwritten;
-        } while (total < nread);
-        errno = 0;  //in case errno got set by write()
+    if ((nread = read(from_fd,buff,4096)) < 0) {
+        perror("Error reading\n");
+        return -1; }
+
+    nwritten = write(to_fd,buff,nread);
+    if (nwritten == -1 && errno != EAGAIN) {
+        perror("Error writing data\n");
+        return -1; }
+
+    else if (errno == EAGAIN) {
+        printf("EAGAIN HIT");
+        client->state = unwritten;
+        *client->buf = *buff;
+        tpool_add_task(client->sock_fd);
+    }
+    else {
+        client->state = established;
     }
 
-    client->state = established;
 
     return 1;
 }
