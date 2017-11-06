@@ -79,6 +79,7 @@ int     kill_client(int fd);
 int     transfer_data(int from_fd);
 int     set_nonblocking(int fd);
 int send_message(int fd , const char * const msg);
+void print_client_info( client_struct* client);
 
 client_struct*  client_slab[MAX_EVENTS*2];
 int epfd;
@@ -106,6 +107,7 @@ int main()
         perror("Could not add listenening socket to epoll unit\n");
         exit(EXIT_FAILURE); }
 
+    printf("server starting...\n");
     // start the epoll wait loop
     epoll_wait_loop();
 
@@ -123,7 +125,7 @@ int setup_server(void)
     struct    sockaddr_in server_address;
     int       option = 1;
 
-    listening_sock                  = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    listening_sock                 = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     server_address.sin_family      = AF_INET;
     server_address.sin_addr.s_addr = htonl(INADDR_ANY);
     server_address.sin_port        = htons(PORT);
@@ -136,7 +138,7 @@ int setup_server(void)
         perror("Error. Could not bind server\n");
         return -1; }
 
-    // listen with a backlog of 5 connections
+    // listen with a backlog of 512 connections
     if ((listen(listening_sock, 512) < 0)) { 
         perror("Oops. Error listening on server\n"); 
         return -1; }
@@ -177,15 +179,16 @@ void process_task(int fd)
 {
     /* Transfer data from one fd to another */
 
-
+    printf("ASDFASDFASDFASDFSDFAFFDSADFSADF\n");
     client_struct* client = client_slab[fd];
     client_state state;
+    int client_fd;
 
     if (client) {
         state = client->state;}
 
     if (fd == listening_sock) {
-        int client_fd = accept_new_client();
+        client_fd = accept_new_client();
         client = client_slab[client_fd];
         send_message(client_fd, rembash_string);
     }
@@ -193,10 +196,21 @@ void process_task(int fd)
     else {
         switch (state) {
             case new:
-                printf("state: new\n");
-                check_protocol_secret(client->sock_fd);
+                client_fd = client->sock_fd;
+
+                printf("==============PRE CHECK PROT");
+                print_client_info(client);
+
+                check_protocol_secret(client_fd);
+
+                printf("==============PRE HANDLE CLIENT (int fd is still %d", client_fd);
+                print_client_info(client);
+
                 handle_client(client);
-                send_message(client->sock_fd, ok_string);
+                printf("==============POST HANDLE CLIENT");
+                print_client_info(client);
+                send_message(client_fd, ok_string);
+                client->state = established;
                 break;
             case established :
                 printf("state: established\n");
@@ -251,6 +265,8 @@ void * handle_client(client_struct* client)
      * client_sockfd is the file descriptor for the socket.
      */
 
+    printf("==============IN HANDLE CLIENT -TOP");
+    print_client_info(client);
     int client_fd = client->sock_fd;
     int master_pty_fd; // the master pty
     char *  slave_pty_name;
@@ -264,6 +280,8 @@ void * handle_client(client_struct* client)
     }
     client->pty_fd = master_pty_fd;
     client_slab[master_pty_fd] = client;
+    printf("Master PTY FD:\t%d\n", master_pty_fd);
+    printf("Client FD (in handle_client):\t%d\n", client_fd);
     set_nonblocking(master_pty_fd);
     set_nonblocking(client_fd);
 
@@ -297,7 +315,6 @@ void * handle_client(client_struct* client)
                 pthread_exit(NULL);
             }
     }
-    client->state = established;
     return NULL;
 }
 
@@ -372,6 +389,7 @@ int check_protocol_secret(int client_sockfd)
         send_message(client_sockfd, error_string);
         return -1;
     }
+    printf("check_prot end FD: %d\n", client_sockfd);
 
     return 1;
 }
@@ -542,7 +560,7 @@ int set_nonblocking(int fd)
     int flags;
 
     if ((flags = fcntl(fd, F_GETFL, 0)) < 0) {
-        perror("Could not get fd flags\n"); 
+        fprintf(stderr, "Could not get fd flags for fd: %d\n", fd); 
         return -1; }
 
     if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
@@ -550,4 +568,33 @@ int set_nonblocking(int fd)
         return -1; }
 
     return 0;
+}
+
+void print_client_info( client_struct* client) 
+{
+    switch (client->state) {
+            case new:
+                printf("\n\nNEW CLIENT\n");
+                break;
+            case established:
+                printf("\n\nESTABLISHED CLIENT\n");
+                break;
+            case unwritten:
+                printf("\n\nUNWRITTEN CLIENT\n");
+                break;
+            case terminated:
+                printf("\n\nTERMINATED CLIENT\n");
+                break;
+            default:
+                printf("\n\nUNKNOWN STATE CLIENT - %d\n", client->state);
+                break;
+    }
+    printf("Sock FD:\t%d\n", client->sock_fd);
+    printf("PTY FD: \t%d\n", client->pty_fd);
+    printf("Buf:    \t[");
+    int i = 3;
+    for (; i < 15; i++){
+        printf("%d, ", client_slab[i] ? client_slab[i]->sock_fd : 0);
+    }
+    printf("%d]\n\n", client_slab[i] ? client_slab[i]->sock_fd : 0);
 }
