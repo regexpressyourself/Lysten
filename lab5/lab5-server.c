@@ -28,6 +28,10 @@
 #define INPUT_SIZE 4096
 #define MAX_EVENTS 20
 
+const char * const rembash_string = "<rembash>\n";
+const char * const ok_string      = "<ok>\n";
+const char * const error_string   = "<error>\n";
+
 typedef enum state {
     new,
     established,
@@ -55,10 +59,11 @@ int     add_fd_to_epoll(int client_sockfd);
 int     setup_pty(void);
 int     check_protocol_secret(int client_sockfd);
 int     write_protocol_string(int client_sockfd);
-void    create_client(int fd);
+void    create_client_struct(int fd);
 int     kill_client(int fd);
 int     transfer_data(int from_fd);
 int     set_nonblocking(int fd);
+int send_message(int fd , const char * const msg);
 
 client_struct*  client_slab[MAX_EVENTS*2];
 int epfd;
@@ -114,14 +119,13 @@ int setup_server(void)
     // use address for socket address to avoid pass by value
     if (bind(listening_sock, (struct sockaddr *)&server_address, server_len)< 0) {
         perror("Error. Could not bind server\n");
-        return -1;
-    }
+        return -1; }
 
     // listen with a backlog of 5 connections
     if ((listen(listening_sock, 512) < 0)) { 
         perror("Oops. Error listening on server\n"); 
-        return -1;
-    }
+        return -1; }
+
     set_nonblocking(listening_sock);
     return 1;
 }
@@ -140,18 +144,15 @@ void * epoll_wait_loop()
         // go through all the ready events
         for (i = 0; i < ready; i++) {
             current_event = evlist[i];
-            // get the fd of the ready event
-            sfd = current_event.data.fd;
-            printf("EPOLL got fd: %d\n", sfd);
+            sfd           = current_event.data.fd;
 
             if ((current_event.events & EPOLLHUP) || 
                     (current_event.events & EPOLLERR) ) {
                 perror("Error getting next epoll ready fd\n");
-                kill_client(sfd);
-            }
+                kill_client(sfd); }
+
             else if (current_event.events & EPOLLIN) {
                 tpool_add_task(sfd);
-                printf("EPOLL added fd to tpool: %d\n", sfd);
             };
         }
     }
@@ -161,6 +162,7 @@ void process_task(int fd)
 {
     /* Transfer data from one fd to another */
 
+
     client_struct* client = client_slab[fd];
     client_state state;
 
@@ -169,40 +171,28 @@ void process_task(int fd)
 
     if (fd == listening_sock) {
         int client_fd = accept_new_client();
-        write_protocol_string(client_fd);
-        check_protocol_secret(client_fd);
         client = client_slab[client_fd];
-        handle_client(client);
+        send_message(client_fd, rembash_string);
     }
+
     else {
         switch (state) {
             case new:
                 printf("state: new\n");
+                check_protocol_secret(client->sock_fd);
+                handle_client(client);
+                send_message(client->sock_fd, ok_string);
                 break;
             case established :
                 printf("state: established\n");
-                printf("\n==================================================\n");
-                printf("Client FD:\t%d\n", client->sock_fd);
-                printf("PTY FD:   \t%d\n", client->pty_fd);
-                printf("Slab:     \t[");
-                for (int i = 0; i<15; i++) {
-                    if (client_slab[i]){
-                        printf("1, ");
-                    }
-                    else{
-                        printf("0, ");
-                    }
-                }
-                printf("0]\n");
-                printf("==================================================\n");
-
                 transfer_data(fd);
                 break;
             case unwritten :
                 printf("state: unwritten\n");
+                transfer_data(fd);
                 break;
             case terminated :
-                printf("state: terminate\n");
+                printf("state: terminated\n");
                 break;
             default:
                 printf("state: default\n");
@@ -231,7 +221,7 @@ int accept_new_client()
         close(client_sockfd);
     }
 
-    create_client(client_sockfd);
+    create_client_struct(client_sockfd);
     add_fd_to_epoll(client_sockfd);
 
     printf("HEY there! Got a client set up\n");
@@ -348,31 +338,11 @@ timer_t setup_timer(int client_sockfd)
     return NULL;
 }
 
-int write_protocol_string(int client_sockfd)
-{
-    printf("WRITING INITIAL PROTOCOL\n");
-    const char * const rembash_string = "<rembash>\n";
-#ifdef DEBUG
-    printf("write_protocol_string's client fd: %d\n",client_sockfd);
-#endif
-
-    // send "<rembash>" to the client upon connection
-    if (write(client_sockfd, rembash_string, strlen(rembash_string))< 0){
-        perror("Oops. Error writing to client.\n"); 
-        return -1;
-    }
-    return 1;
-}
 int check_protocol_secret(int client_sockfd) 
 {
-    const char * const ok_string      = "<ok>\n";
-    const char * const error_string   = "<error>\n";
     int  bytes_read;
     char buffer[INPUT_SIZE];
     memset(buffer, 0, INPUT_SIZE);
-#ifdef DEBUG
-    printf("check_protocol_secret's client fd: %d\n",client_sockfd);
-#endif
 
     // wait to read the secret word from client.
     // our timer will interrupt this read in the event of 
@@ -384,16 +354,7 @@ int check_protocol_secret(int client_sockfd)
 
     // if the secret is incorrect, close the connection
     if (strcmp(buffer, SECRET) != 0) {
-        if (write(client_sockfd, error_string, strlen(error_string)) < 0){
-            perror("Oops. Error writing to socket\n"); 
-            return -1;
-        }
-        return -1;
-    }
-
-    // if the secret was correct, send <ok>
-    if (write(client_sockfd, ok_string, strlen(ok_string)) < 0){
-        perror("Oops. Error writing to client.\n"); 
+        send_message(client_sockfd, error_string);
         return -1;
     }
 
@@ -444,9 +405,6 @@ int add_fd_to_epoll(int fd)
 
     struct epoll_event ev;
 
-#ifdef DEBUG
-    printf("adding epoll fd: %d\n", fd);
-#endif
     ev.events  = EPOLLIN | EPOLLET;
     ev.data.fd = fd;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev) == -1){
@@ -486,67 +444,92 @@ int setup_pty(void)
     return master_pty_fd;
 }
 
-void create_client(int fd) 
+void create_client_struct(int fd) 
 {
     client_struct client;
-    client.sock_fd = fd;
-    client.state = new;
-    client.pty_fd = -1;
+    client.sock_fd  = fd;
+    client.state    = new;
+    client.pty_fd   = -1;
     client_slab[fd] = &client;
 }
 
 int kill_client(int fd) 
 {
-    printf("KILLING CLIENT\n");
     client_struct* client = client_slab[fd];
-    epoll_ctl(epfd, EPOLL_CTL_DEL, client->sock_fd, NULL);
-    epoll_ctl(epfd, EPOLL_CTL_DEL, client->pty_fd, NULL);
-    printf("CLOSING FDS\n");
-    client_slab[client->pty_fd] = NULL;
+    if (!client) {return -1;}
+
+    if (epoll_ctl(epfd, EPOLL_CTL_DEL, client->sock_fd, NULL) < 0 ||
+            epoll_ctl(epfd, EPOLL_CTL_DEL, client->pty_fd, NULL) < 0 ) {
+        perror("Error removing client fds from epoll unit\n");
+        return -1;}
+
+    client_slab[client->pty_fd]  = NULL;
     client_slab[client->sock_fd] = NULL;
-    close(client->pty_fd);
-    close(client->sock_fd);
-    printf("CLIENT DEAD\n");
+
+    if (close(client->pty_fd) < 0 || 
+            close(client->sock_fd) < 0 ) {
+        perror("Error closing client fds\n");
+        return -1;}
+
     return 1;
+}
+
+int send_message(int fd , const char * const msg)
+{
+  ssize_t msg_size, nwritten, total;
+  msg_size = strlen(msg);
+  total = 0;
+
+  do {
+      if ((nwritten = write(fd, msg+total, msg_size - total)) <0) {
+          perror("Error writing message\n");
+          return -1; }
+      total += nwritten;
+  } while(total < msg_size);
+  errno = 0;  //in case errno got set by write()
+  return 1;
+
 }
 
 int transfer_data(int from_fd)
 {
     client_struct* client = client_slab[from_fd];
-    int to_fd = (client->pty_fd == from_fd) ? client->sock_fd : client->pty_fd;
-    char buf[4096];
-    int num_read;
-    int total;
-    int num_written;
+    int to_fd = (client->pty_fd == from_fd) ?  client->sock_fd : client->pty_fd;
+    client->state = unwritten;
 
-    if ((num_read = read(from_fd, buf, 4096)) > 0) {
+    char buff[4096];
+    memset(buff, 0, 4096);
+
+    ssize_t nread, nwritten, total;
+
+    errno = 0;  
+    while (!errno && (nread = read(from_fd,buff,4096)) > 0) {
         total = 0;
         do {
-            if ((num_written = write(to_fd, buf + total, num_read - total)) == -1) {
-                break; }
-            total += num_written;
-        }
-        while (total < num_read);
+            nwritten = write(to_fd,buff+total,nread-total);
+            if (nwritten == -1 && errno != EAGAIN)
+                break;  //true error when writing so stop do-while
+            total += nwritten;
+        } while (total < nread);
+        errno = 0;  //in case errno got set by write()
     }
-    if (num_read < 0 && errno != EWOULDBLOCK && errno != EAGAIN) {
-        perror("Error reading\n"); }
+
+    client->state = established;
+
     return 1;
 }
 
 int set_nonblocking(int fd)
 {
-    int return_val;
+    int flags;
 
-    if ((return_val = fcntl(fd, F_GETFL, 0)) == -1)
-    {
-        perror("Could not get current mode when setting non-blocking\n");
-        return -1;
-    }
-    return_val |= O_NONBLOCK;
-    if (fcntl(fd, F_SETFL, return_val) == -1)
-    {
-        perror("Could not set flags for nonblocking mode\n");
-        return -1;
-    }
+    if ((flags = fcntl(fd, F_GETFL, 0)) < 0) {
+        perror("Could not get fd flags\n"); 
+        return -1; }
+
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        perror("Could not set nonblocking fd flags\n"); 
+        return -1; }
+
     return 0;
 }
