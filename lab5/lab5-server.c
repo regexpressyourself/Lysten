@@ -382,21 +382,18 @@ int exec_bash(char  *slave_pty_name)
     // get the slave PTY FD
     if ((slave_pty_fd = open(slave_pty_name, O_RDWR)) < 0) {
         perror("Oops. Could not open slave PTY FD");
-        exit(EXIT_FAILURE);
-    }
+        exit(EXIT_FAILURE); }
 
     // create a new session
     if (setsid() < 0) {
         perror("Could not set SID\n");
-        exit(EXIT_FAILURE);
-    }
+        exit(EXIT_FAILURE); }
 
     // redirect in, out, and error
     for (int i = 0; i < 3; i++) {
         if (dup2(slave_pty_fd, i) < 0) {
             perror("Oops. Dup2 error.\n");
-            exit(EXIT_FAILURE);
-        }
+            exit(EXIT_FAILURE); }
     }
 
     // run bash
@@ -491,18 +488,18 @@ int kill_client(int fd)
 
 int send_message(int fd , const char * const msg)
 {
-  ssize_t msg_size, nwritten, total;
-  msg_size = strlen(msg);
-  total = 0;
+    ssize_t msg_size, nwritten, total;
+    msg_size = strlen(msg);
+    total = 0;
 
-  do {
-      if ((nwritten = write(fd, msg+total, msg_size - total)) <0) {
-          perror("Error writing message\n");
-          return -1; }
-      total += nwritten;
-  } while(total < msg_size);
-  errno = 0;  //in case errno got set by write()
-  return 1;
+    do {
+        if ((nwritten = write(fd, msg+total, msg_size - total)) <0) {
+            perror("Error writing message\n");
+            return -1; }
+        total += nwritten;
+    } while(total < msg_size);
+    errno = 0;  //in case errno got set by write()
+    return 1;
 
 }
 
