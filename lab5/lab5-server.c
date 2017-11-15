@@ -559,10 +559,15 @@ int transfer_data(int from_fd)
     ssize_t nread, nwritten;
 
     errno = 0;  
-    if ((nread = read(from_fd,buff,4096)) < 0) {
+    nread = read(from_fd,buff,4096);
+    if (errno == EAGAIN) {
+        printf("Returned eagain\n");
+        return 0; }
+
+    else if (nread <= 0) {
         fprintf(stderr,"Error reading from %d\n",(int)from_fd);
-        return -1;
-    }
+        return -1; }
+
     printf("Read __%s__ from %d\n", buff, from_fd);
 
     switch (client->state) {
