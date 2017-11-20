@@ -141,8 +141,10 @@ void handle_data_transfer(int from_fd, int to_fd, pid_t pid)
     int    bytes_read;          // hold how many bytes were read from socket
     char   buffer[INPUT_SIZE];  // general-purpose buffer to hold strings
 
+    memset(buffer, 0, sizeof(buffer));
     // read from stdin
     bytes_read = read(from_fd, &buffer, sizeof(buffer));
+
     if (bytes_read < 0){ 
 #ifdef DEBUG
         fprintf(stderr, "Oops. Read failure from %d to %d.\n", from_fd, to_fd); 
@@ -157,11 +159,15 @@ void handle_data_transfer(int from_fd, int to_fd, pid_t pid)
         kill(pid, SIGTERM);
         exit(0);
     }
+    else {
+    }
     // write to socket
     if (write(to_fd, buffer, bytes_read) < 0){ 
         fprintf(stderr, "Oops. Write failure to %d.\n", to_fd); 
         kill(pid, SIGTERM);
         exit(1);
+    }
+    else {
     }
     return;
 }
