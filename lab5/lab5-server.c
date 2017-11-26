@@ -1,8 +1,6 @@
 /* lab5-server.c
  * Sam Messina
  * CS 407
- * TODO
- * [ ] look into partial write problem/fix busy wait in transfer_data()
  */
 
 
@@ -50,38 +48,28 @@ typedef struct client {
     char buf[4096];
 } client_struct;
 
-typedef struct timer {
-    int timer_fd;
-    int client_fd;
-} timer_struct;
+int    setup_server(void);
+void * epoll_wait_loop();
+void   process_task(int fd);
+int    accept_new_client();
+void * handle_client(client_struct * client);
+int    setup_timer(int client_sockfd);
+int    exec_bash(char  * slave_pty_name);
+int    add_fd_to_epoll(int client_sockfd);
+int    setup_pty(void);
+int    check_protocol_secret(int client_sockfd);
+void   create_client_struct(int fd);
+int    kill_client(int fd);
+int    transfer_data(int from_fd);
+int    set_nonblocking(int fd);
+int    send_message(int fd , char* msg);
+void   print_client_info( client_struct client);
+int    mod_epoll_unit(int fd) ;
+int    handle_timer_epoll_loop(int sfd);
 
-int     setup_server(void);
-void *  epoll_wait_loop();
-void    process_task(int fd);
-int     close_hung_fds(int hung_fd);
-int     accept_new_client();
-void *  handle_client(client_struct* client);
-void    timer_handler(int sig, siginfo_t * si, void * uc);
-int setup_timer(int client_sockfd);
-int     exec_bash(char  * slave_pty_name);
-int     add_fd_to_epoll(int client_sockfd);
-int     setup_pty(void);
-int     check_protocol_secret(int client_sockfd);
-int     write_protocol_string(int client_sockfd);
-void    create_client_struct(int fd);
-int     kill_client(int fd);
-int     transfer_data(int from_fd);
-int     set_nonblocking(int fd);
-int send_message(int fd , char* msg);
-void print_client_info( client_struct* client);
-int finish_writing_data(client_struct* client);
-int mod_epoll_unit(int fd) ;
-int handle_timer_epoll_loop(int sfd);
-
-// TODO: check indexes for all injections on this
 int timer_slab[MAX_EVENTS];
-client_struct*  client_ptr_slab[MAX_EVENTS*2];
-client_struct  client_slab[MAX_EVENTS];
+client_struct * client_ptr_slab[MAX_EVENTS*2];
+client_struct   client_slab[MAX_EVENTS];
 int epfd;
 int timer_epfd;
 int listening_sock;
@@ -167,15 +155,15 @@ void * epoll_wait_loop()
     while (1) {
         ready = epoll_wait(epfd, evlist, MAX_EVENTS, -1);
         if (ready < 0 ){
+#ifdef DEBUG
             printf("problem with epoll_wait\n");
+#endif
             break;
         }
 
         for (i = 0; i < ready; i++) {
             current_event = evlist[i];
             sfd           = current_event.data.fd;
-            printf("next i: %d\n", i);
-            printf("sfd is %d\n", sfd);
 
             if ((current_event.events & EPOLLHUP) || 
                     (current_event.events & EPOLLERR) ) {
@@ -188,14 +176,25 @@ void * epoll_wait_loop()
                     if (handle_timer_epoll_loop(sfd) < 0) {
                         perror("Error handling timer epoll\n");
                     }
+
+                    struct epoll_event ev;
+                    ev.events  = EPOLLIN | EPOLLET | EPOLLONESHOT;
+                    //ev.events  = EPOLLIN| EPOLLET;
+                    ev.data.fd = timer_epfd;
+                    if (epoll_ctl(epfd, EPOLL_CTL_MOD, timer_epfd, &ev) == -1){
+#ifdef DEBUG
+                        fprintf(stderr, "Modding client epoll_ctl failed. fd: %d\n", timer_epfd);
+#endif
+                    }
                 }
                 else if (tpool_add_task(sfd) < 0) {
+#ifdef DEBUG
                     printf("error adding task\n");
+#endif
                 }
             };
         }
     }
-    printf("UH OH, EPOLL LOOP BROKE\n");
     return NULL;
 }
 
@@ -206,12 +205,10 @@ int handle_timer_epoll_loop(int sfd)
     int    time_sfd;   // the fd of the ready epoll event
     struct epoll_event time_evlist[MAX_EVENTS];
     struct epoll_event time_current_event;
-    printf("TIMER FD MARKED IN EPOLL\n");
 
     time_ready = epoll_wait(timer_epfd, time_evlist, MAX_EVENTS, -1);
 
     if (time_ready < 0 ){
-        printf("problem with epoll_wait\n");
         return -1;
     }
     for (i = 0; i < time_ready; i++) {
@@ -238,19 +235,19 @@ void process_task(int fd)
 {
     /* Transfer data from one fd to another */
 
-    client_struct* client = client_ptr_slab[fd];
+    client_struct* client_ptr = client_ptr_slab[fd];
+    client_struct client;
     client_state state;
     int client_fd;
 
-    if (client) {
-        state = client->state;}
+    if (client_ptr) {
+        client = client_slab[client_ptr->sock_fd];
+        state = client.state;}
 
     if (fd == listening_sock) {
         client_fd = accept_new_client();
         setup_timer(client_fd);
-        client = client_ptr_slab[client_fd];
         send_message(client_fd, rembash_string);
-        print_client_info(client);
         mod_epoll_unit(fd);
     }
 
@@ -258,44 +255,46 @@ void process_task(int fd)
         switch (state) {
             case new:
                 printf("state: new\n");
-                client_fd = client->sock_fd;
+                client_fd = client.sock_fd;
 
                 check_protocol_secret(client_fd);
 
-                handle_client(client);
+                handle_client(&client);
                 send_message(client_fd, ok_string);
 
-                client->state = established;
+                client.state = established;
                 mod_epoll_unit(fd);
                 break;
             case established :
                 printf("state: established\n");
-
-                if (transfer_data(fd) < 0 ) {
-                    printf("ERROR TRANSFERRING DATA from %d\n", fd);
-                }
-
+                transfer_data(fd);
                 mod_epoll_unit(fd);
                 break;
             case unwritten :
-                printf("state: unwritten\n");
-                send_message(client->sock_fd, client->buf);
-                client->state = established;
-                memset(client->buf, 0, 4096);
+                printf("state: UNWRITTEN\n");
+                if (send_message(client.sock_fd, client.buf) > 0) {
+                    client.state = established;
+                    memset(client.buf, 0, 4096);
+                }
                 mod_epoll_unit(fd);
                 break;
             case terminated :
-                print_client_info(client);
                 printf("state: terminated\n");
-                kill_client(client->sock_fd);
+                kill_client(client.sock_fd);
                 break;
             default:
                 printf("state: default\n");
                 break;
         }
-
+        if (client.sock_fd) {
+            client_slab[client.sock_fd] = client;
+            client_ptr_slab[client.sock_fd] = &client_slab[client.sock_fd];
+            if (client.pty_fd) {
+                client_ptr_slab[client.pty_fd] = &client_slab[client.sock_fd];
+            }
+        }
+        print_client_info(client);
     }
-
 }
 
 int accept_new_client()
@@ -311,7 +310,6 @@ int accept_new_client()
 
     // seperate fd for each client
     client_sockfd = accept4(listening_sock, (struct sockaddr *) NULL, NULL, SOCK_CLOEXEC);
-    printf("ACCEPTED NEW CLIENT: %d\n", client_sockfd);
 
 
     if (client_sockfd < 0) {
@@ -326,7 +324,7 @@ int accept_new_client()
     return client_sockfd;
 }
 
-void * handle_client(client_struct* client) 
+void * handle_client(client_struct * client) 
 {
     /* handle_client is called after a 
      * connection with the client has been created.
@@ -346,9 +344,7 @@ void * handle_client(client_struct* client)
 #endif
     }
     client->pty_fd = master_pty_fd;
-    client_ptr_slab[master_pty_fd] = client;
-    //printf("Master PTY FD:\t%d\n", master_pty_fd);
-    //printf("Client FD (in handle_client):\t%d\n", client_fd);
+
 
     // get the slave pty name from the master pty
     slave_pty_name = ptsname(master_pty_fd);
@@ -403,13 +399,17 @@ int setup_timer(int client_sockfd)
         perror("Error creating timer\n");
         return -1;
     }
-    printf("timer fd is: %d\n", timer_fd);
+#ifdef DEBUG
+    fprintf(stderr, "timer fd is: %d\n", timer_fd);
+#endif
 
     if (timerfd_settime(timer_fd, timer_flag, &timer, NULL) == -1) {
         perror("Error setting time on timer\n");
         return -1;
     }
-    printf("Adding client fd (%d) to slab at index: %d\n", client_sockfd,timer_fd);
+#ifdef DEBUG
+    fprintf(stderr, "Adding client fd (%d) to slab at index: %d\n", client_sockfd,timer_fd);
+#endif
 
     timer_slab[timer_fd] = client_sockfd;
 
@@ -419,7 +419,9 @@ int setup_timer(int client_sockfd)
     //ev.events  = EPOLLIN | EPOLLET ;
     ev.data.fd = timer_fd;
     if (epoll_ctl(timer_epfd, EPOLL_CTL_ADD, timer_fd, &ev) == -1){
+#ifdef DEBUG
         fprintf(stderr, "adding client epoll_ctl failed. fd: %d\n", timer_fd);
+#endif
         return -1;
     }
 
@@ -488,10 +490,11 @@ int mod_epoll_unit(int fd)
     //ev.events  = EPOLLIN| EPOLLET;
     ev.data.fd = fd;
     if (epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev) == -1){
+#ifdef DEBUG
         fprintf(stderr, "Modding client epoll_ctl failed. fd: %d\n", fd);
+#endif
         return -1;
     }
-    printf("modded epoll unit: %d\n", fd);
     return 0;
 }
 
@@ -509,7 +512,9 @@ int add_fd_to_epoll(int fd)
     //ev.events  = EPOLLIN | EPOLLET ;
     ev.data.fd = fd;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev) == -1){
+#ifdef DEBUG
         fprintf(stderr, "adding client epoll_ctl failed. fd: %d\n", fd);
+#endif
         return -1;
     }
 
@@ -552,7 +557,7 @@ void create_client_struct(int fd)
     client.state    = new;
     client.pty_fd   = -1;
     client_slab[fd] = client;
-    client_ptr_slab[fd] = &client;
+    client_ptr_slab[fd] = &client_slab[fd];
 }
 
 int kill_client(int fd) 
@@ -568,7 +573,6 @@ int kill_client(int fd)
     client_ptr_slab[client->pty_fd]  = NULL;
     client_ptr_slab[client->sock_fd] = NULL;
     client_slab[client->sock_fd].sock_fd = -1;
-    client_slab[client->sock_fd].pty_fd = -1;
 
     if (close(client->pty_fd) < 0 || 
             close(client->sock_fd) < 0 ) {
@@ -585,39 +589,48 @@ int send_message(int fd , char* msg)
     nwritten = write(fd, msg, msg_size );
 
     if (nwritten < 0) {
-        perror("Error writing message\n");
+#ifdef DEBUG
+        fprintf(stderr,"Error sending message (nwritten = %d)\n", (int) nwritten);
+#endif
         return -1; }
 
     errno = 0;  //in case errno got set by write()
     return 1;
-
 }
 
 int transfer_data(int from_fd)
 {
     client_struct* client = client_ptr_slab[from_fd];
 
-    printf("pty_fd: %d\n", client->pty_fd);
-    printf("sock_fd: %d\n", client->sock_fd);
 
     int to_fd = from_fd == client->pty_fd ? client->sock_fd : client->pty_fd;
-    printf("IN transfer_data() (from: %d, to: %d)\n", from_fd, to_fd);
+#ifdef DEBUG
+    fprintf(stderr, "IN transfer_data() (from: %d, to: %d)\n", from_fd, to_fd);
+#endif
 
     char buff[4096];
     ssize_t nread, nwritten;
     errno = 0;
     nread = read(from_fd, buff, 4096);
     if (nread < 0 || errno) {
-        fprintf(stderr, "Error reading from: %d\n", from_fd);
-        return -1;
+        if (errno != EAGAIN) {
+#ifdef DEBUG
+            fprintf(stderr, "Error reading from: %d\n", from_fd);
+#endif
+            return -1;
+        }
     }
     else if (nread == 0) {
         client->state = terminated;
-        return -1;
+        return 0;
     }
+    errno = 0;
     nwritten = write(to_fd, buff, nread);
+
     if (nwritten < 0 || (errno && errno != EAGAIN)) {
-        fprintf(stderr, "Error writinf to: %d\n", to_fd);
+#ifdef DEBUG
+        fprintf(stderr, "Error writinf to: %d (return val: %d)\n", to_fd, (int) nwritten);
+#endif
         nwritten = write(to_fd, client->buf, nread);
         client->state = unwritten;
         return -1;
@@ -642,12 +655,12 @@ int set_nonblocking(int fd)
         return -1;
     }
     return 0;
-
 }
 
-void print_client_info( client_struct* client) 
+void print_client_info( client_struct client) 
 {
-    switch (client->state) {
+#ifdef DEBUG
+    switch (client.state) {
         case new:
             printf("\n\nNEW CLIENT\n");
             break;
@@ -661,11 +674,11 @@ void print_client_info( client_struct* client)
             printf("\n\nTERMINATED CLIENT \n");
             break;
         default:
-            printf("\n\nUNKNOWN STATE CLIENT -  %d\n", client->state);
+            printf("\n\nUNKNOWN STATE CLIENT -  %d\n", client.state);
             break;
     }
-    printf("Sock FD:\t%d\n", client->sock_fd);
-    printf("PTY FD: \t%d\n", client->pty_fd);
+    printf("Sock FD:\t%d\n", client.sock_fd);
+    printf("PTY FD: \t%d\n", client.pty_fd);
     printf("Buf:    \t[");
     int i = 3;
     for (; i < 15; i++){
@@ -673,6 +686,14 @@ void print_client_info( client_struct* client)
     }
     printf("%d]\n\n", client_ptr_slab[i] ? client_ptr_slab[i]->sock_fd : 0);
 
+    printf("Buf:    \t[");
+    i = 3;
+    for (; i < 15; i++){
+        printf("%d, ", client_slab[i].sock_fd );
+    }
+    printf("%d]\n\n", client_slab[i].sock_fd );
+
     printf("Client Buf:\t");
-    printf("%s\n", client->buf);
+    printf("%s\n", client.buf);
+#endif
 }
