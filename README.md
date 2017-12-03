@@ -1,4 +1,4 @@
-<img alt="Practice Buddy" align="right" src="https://regexpressyourself.github.io/public/practicebuddy_logo.png" width="400px" />
+<img alt="Lysten Logo" align="right" src="https://regexpressyourself.github.io/public/lysten-logo.png" width="400px" />
 
 # Lysten
 
