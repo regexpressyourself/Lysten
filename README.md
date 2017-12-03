@@ -1,4 +1,4 @@
-<img alt="Lysten Logo" align="right" src="https://regexpressyourself.github.io/public/lysten.png" width="400px" />
+<img alt="Lysten Logo" align="right" src="https://smessina.com/images/lysten.png" width="400px" />
 
 # Lysten
 
