@@ -33,6 +33,8 @@ Lysten uses either static or shared libraries in order to incorporate the thread
    make package-shared-lib
 ```
 
+**[Back to top](#table-of-contents)**
+
 ## Compiling
 
 To compile Lysten using the shared thread pool libraries, run:
@@ -47,6 +49,8 @@ To compile Lysten using the static thread pool libraries, run:
    make compile-static
 ```
 
+**[Back to top](#table-of-contents)**
+
 ## Debugging
 
 To compile Lysten with debugging statements on, run:
@@ -57,6 +61,8 @@ To compile Lysten with debugging statements on, run:
 
 _Note: This compiles using the thread pool's static libraries, so make sure to run `make package-static-lib` first._
 
+**[Back to top](#table-of-contents)**
+
 ## Testing
 
 Included is a test script to pelt the server with multiple clients all at once. You can run this test with: 
@@ -66,6 +72,8 @@ Included is a test script to pelt the server with multiple clients all at once. 
 ```
 
 By default, the test script will spin up 10 clients who each run 10 cycles or commands. This can be changed by running `./test/testserver.sh` directly
+
+**[Back to top](#table-of-contents)**
 
 ## Running
 
