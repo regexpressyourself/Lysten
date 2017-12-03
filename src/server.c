@@ -1,6 +1,6 @@
-/* lab5-server.c
+/* 
+ * server.c
  * Sam Messina
- * CS 407
  */
 
 

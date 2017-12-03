@@ -1,6 +1,6 @@
-/* lab5-client.c
+/* 
+ * client.c
  * Sam Messina
- * CS 407
  */
 
 #define _DEFAULT_SOURCE
