@@ -14,10 +14,6 @@ A general-purpose server, implemented using multiplexed I/O with epoll and custo
 3. [License](#license)
 
 
-## Introduction
-
-Lysten is an implementation of an SSH server, but can be easily extended to a general purpose server, a la Nginx.
-
 ## Getting Started
 
 Lysten uses either static or shared libraries in order to incorporate the thread pool. These libraries can be set with `make`. 
@@ -58,7 +54,7 @@ To compile Lysten with debugging statements on, run:
    make compile-debug
 ```
 
-Note: This compiles using the thread pool's static libraries, so make sure to run `make package-static-lib` first.
+_Note: This compiles using the thread pool's static libraries, so make sure to run `make package-static-lib` first._
 
 ### Testing
 
@@ -83,23 +79,21 @@ To start a client, execute:
 ``` 
     make run-client
 ```
+
 **[Back to top](#table-of-contents)**
 
 ## Built With
 
-* [React](https://facebook.github.io/react/) - The web framework that powers the site
-* [Webpack](https://webpack.github.io/) - A module builder automate development and production build processes
-* [React Router v. 4](https://reacttraining.com/react-router/) - Sits on top of React to enable route-based views without a backend server
-* [Babel](https://babeljs.io/) - Transpiler to convert raw React code into browser-ready HTML and Javascript
-* [create-react-app](https://github.com/facebookincubator/create-react-app) - Boilerplate React configuration from Facebook
+* [C](https://en.wikipedia.org/wiki/C_(programming_language)) - The C language itself
+* [Epoll](http://man7.org/linux/man-pages/man7/epoll.7.html) - Multiple epoll units are used to efficiently retrieve tasks from a job queue
+* [Thread Pool](https://en.wikipedia.org/wiki/Thread_pool) - A custom thread pool is used to disperse tasks across cores
+* [Pseudo TTYs](https://en.wikipedia.org/wiki/Pseudoterminal) - Psuedo terminals spin up to run Bash ommands remotely
 
 **[Back to top](#table-of-contents)**
 
 ## Contributing
 
 As always, I'm very happy to receive pull requests, questions/issues regarding code, and feature requests. 
-
-Practice Buddy is under active development, poised for a complete feature set by January 2018. If you are interested in contributing, check out the existing [projects](https://github.com/regexpressyourself/PracticeBuddy/projects) and [issues](https://github.com/regexpressyourself/PracticeBuddy/issues), and contact me if anything sounds interesting to you.
 
 **[Back to top](#table-of-contents)**
 
@@ -111,8 +105,7 @@ Practice Buddy is under active development, poised for a complete feature set by
 
 ## License
 
-Practice Buddy is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
-
+Lysten is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
 
 **[Back to top](#table-of-contents)**
 
