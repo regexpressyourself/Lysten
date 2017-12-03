@@ -96,7 +96,7 @@ To start a client, execute:
 * [C](https://en.wikipedia.org/wiki/C_(programming_language)) - The C language itself
 * [Epoll](http://man7.org/linux/man-pages/man7/epoll.7.html) - Multiple epoll units are used to efficiently retrieve tasks from a job queue
 * [Thread Pool](https://en.wikipedia.org/wiki/Thread_pool) - A custom thread pool is used to disperse tasks across cores
-* [Pseudo TTYs](https://en.wikipedia.org/wiki/Pseudoterminal) - Psuedo terminals spin up to run Bash ommands remotely
+* [Pseudo TTYs](https://en.wikipedia.org/wiki/Pseudoterminal) - Psuedo terminals spin up to run Bash commands remotely
 
 **[Back to top](#table-of-contents)**
 
