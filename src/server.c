@@ -23,12 +23,12 @@
 #include <time.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
-#include "tpool.h"
+#include "lib/tpool.h"
 
-#define SECRET     "cs407rembash\n"
+#define SECRET     "<cs407rembash>\n"
 #define PORT       4070
 #define INPUT_SIZE 4096
-#define MAX_EVENTS 20
+#define MAX_EVENTS 500
 
 char* rembash_string = "<rembash>\n";
 char* ok_string      = "<ok>\n";
@@ -140,7 +140,9 @@ int setup_server(void)
         perror("Oops. Error listening on server\n"); 
         return -1; }
 
-    set_nonblocking(listening_sock);
+    if (set_nonblocking(listening_sock) < 0) {
+        fprintf(stderr, "Error setting nonblocking\n");
+    }
     return 1;
 }
 
@@ -217,16 +219,16 @@ int handle_timer_epoll_loop(int sfd)
 
         int client_fd = timer_slab[time_sfd];
         if (client_ptr_slab[client_fd] && client_ptr_slab[client_fd]->state == new){
-
             if (epoll_ctl(epfd, EPOLL_CTL_DEL, client_fd, NULL) < 0) {
-                perror("Error removing client fds from epoll unit\n");
+                perror("Error removing stalled client fds from epoll unit\n");
                 return -1;}
             close(client_fd);
         }
 
         if (epoll_ctl(timer_epfd, EPOLL_CTL_DEL, time_sfd, NULL) < 0) {
-            perror("Error removing client fds from epoll unit\n");
+            perror("Error removing timer fds from epoll unit\n");
             return -1;}
+        close(time_sfd);
     }
     return 1;
 }
@@ -254,10 +256,15 @@ void process_task(int fd)
     else {
         switch (state) {
             case new:
+#ifdef DEBUG
                 printf("state: new\n");
+#endif
                 client_fd = client.sock_fd;
 
-                check_protocol_secret(client_fd);
+                if (check_protocol_secret(client_fd) < 0) {
+                    close(client_fd);
+                    break;
+                }
 
                 handle_client(&client);
                 send_message(client_fd, ok_string);
@@ -266,12 +273,16 @@ void process_task(int fd)
                 mod_epoll_unit(fd);
                 break;
             case established :
+#ifdef DEBUG
                 printf("state: established\n");
+#endif
                 transfer_data(fd);
                 mod_epoll_unit(fd);
                 break;
             case unwritten :
+#ifdef DEBUG
                 printf("state: UNWRITTEN\n");
+#endif
                 if (send_message(client.sock_fd, client.buf) > 0) {
                     client.state = established;
                     memset(client.buf, 0, 4096);
@@ -279,11 +290,15 @@ void process_task(int fd)
                 mod_epoll_unit(fd);
                 break;
             case terminated :
+#ifdef DEBUG
                 printf("state: terminated\n");
+#endif
                 kill_client(client.sock_fd);
                 break;
             default:
+#ifdef DEBUG
                 printf("state: default\n");
+#endif
                 break;
         }
         if (client.sock_fd) {
@@ -316,7 +331,9 @@ int accept_new_client()
         close(client_sockfd);
     }
 
-    set_nonblocking(client_sockfd);
+    if (set_nonblocking(client_sockfd) < 0) {
+        fprintf(stderr, "Error setting nonblocking\n");
+    }
     create_client_struct(client_sockfd);
     add_fd_to_epoll(client_sockfd);
 
@@ -368,7 +385,9 @@ void * handle_client(client_struct * client)
             exec_bash(slave_pty_name);
         default: // parent
             // set up the epoll units and kill the temp thread
-            set_nonblocking(master_pty_fd);
+            if (set_nonblocking(master_pty_fd) < 0) {
+                fprintf(stderr, "Error setting nonblocking\n");
+            }
             if(add_fd_to_epoll(master_pty_fd) < 0) {
                 perror("add_fd_to_epoll returned error\n");
                 kill(pid, SIGTERM);
@@ -444,6 +463,9 @@ int check_protocol_secret(int client_sockfd)
 
     // if the secret is incorrect, close the connection
     if (strcmp(buffer, SECRET) != 0) {
+        perror("strcmp didnt match\n");
+        printf("buffer: %s\n", buffer);
+        printf("secret: %s\n", SECRET);
         send_message(client_sockfd, error_string);
         return -1;
     }
@@ -564,15 +586,20 @@ int kill_client(int fd)
     client_struct* client = client_ptr_slab[fd];
     if (!client) {return -1;}
 
+
     if (epoll_ctl(epfd, EPOLL_CTL_DEL, client->sock_fd, NULL) < 0 ||
             epoll_ctl(epfd, EPOLL_CTL_DEL, client->pty_fd, NULL) < 0 ) {
         perror("Error removing client fds from epoll unit\n");
         return -1;}
 
-    if (close(client->pty_fd) < 0 || 
-            close(client->sock_fd) < 0 ) {
-        perror("Error closing client fds\n");
+    if (close(client->sock_fd) < 0 ) {
+        perror("Error closing client fd\n");
         return -1;}
+    if (close(client->pty_fd) < 0) {
+        perror("Error closing pty fd\n");
+        return -1;}
+
+
 
     client_ptr_slab[client->pty_fd]  = NULL;
     client_ptr_slab[client->sock_fd] = NULL;
@@ -584,7 +611,7 @@ int send_message(int fd , char* msg)
 {
     ssize_t msg_size, nwritten;
     msg_size = strlen(msg);
-    nwritten = write(fd, msg, msg_size );
+    nwritten = write(fd, msg, msg_size);
 
     if (nwritten < 0) {
 #ifdef DEBUG

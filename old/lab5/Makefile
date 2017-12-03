@@ -1,5 +1,9 @@
 all: compile-debug
 
+compile:
+	gcc -Wall -std=gnu99 -o server lab5-server.c tpool.so -pthread
+	gcc -Wall -std=gnu99 -o client lab5-client.c tpool.so -pthread
+
 
 compile-debug: lab5-server.c lab5-client.c tpool.so
 	gcc -Wall -D DEBUG -std=gnu99 -o server lab5-server.c tpool.so -pthread
