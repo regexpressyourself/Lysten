@@ -6,33 +6,34 @@ A general-purpose server, implemented using multiplexed I/O with epoll and custo
 
 ## Table of Contents
 
-1. [Getting Started](#getting-started)
-2. [Deployment](#deployment)
-2. [Built With](#built-with)
-3. [Contributing](#contributing)
-3. [Authors](#authors)
-3. [License](#license)
+1. [Setting up Libraries](#setting-up-libraries)
+2. [Compiling](#compiling)
+3. [Debugging](#debugging)
+4. [Testing](#testing)
+5. [Running](#running)
+6. [Built With](#built-with)
+7. [Contributing](#contributing)
+8. [Authors](#authors)
+9. [License](#license)
 
 
-## Getting Started
+## Setting up Libraries 
 
 Lysten uses either static or shared libraries in order to incorporate the thread pool. These libraries can be set with `make`. 
 
-### Setting up Libraries 
-
-#### Static Library Compilation
+### Static Library Compilation
 
 ```
    make package-static-lib
 ```
 
-#### Shared Library Compilation
+### Shared Library Compilation
 
 ```
    make package-shared-lib
 ```
 
-### Compiling
+## Compiling
 
 To compile Lysten using the shared thread pool libraries, run:
 
@@ -46,7 +47,7 @@ To compile Lysten using the static thread pool libraries, run:
    make compile-static
 ```
 
-### Debugging
+## Debugging
 
 To compile Lysten with debugging statements on, run:
 
@@ -56,7 +57,7 @@ To compile Lysten with debugging statements on, run:
 
 _Note: This compiles using the thread pool's static libraries, so make sure to run `make package-static-lib` first._
 
-### Testing
+## Testing
 
 Included is a test script to pelt the server with multiple clients all at once. You can run this test with: 
 
@@ -66,7 +67,7 @@ Included is a test script to pelt the server with multiple clients all at once. 
 
 By default, the test script will spin up 10 clients who each run 10 cycles or commands. This can be changed by running `./test/testserver.sh` directly
 
-### Running
+## Running
 
 To run the server, execute:
 
